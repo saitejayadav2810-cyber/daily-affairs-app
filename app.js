@@ -1012,6 +1012,12 @@ function showSubjectPicker() {
   }
 
   DOM.cardArea?.classList.add('hidden');
+
+  // ── Hide all mock views so they never bleed through ──────────
+  ['mock-list-view', 'mock-arena', 'mock-results'].forEach(id => {
+    document.getElementById(id)?.classList.add('hidden');
+  });
+
   DOM.subjectPicker?.classList.remove('hidden');
 
   // Re-render so counts are fresh
