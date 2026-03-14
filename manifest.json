@@ -6,12 +6,15 @@
   "scope": "/",
   "id": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
   "background_color": "#0a0a12",
   "theme_color": "#0a0a12",
   "orientation": "portrait-primary",
   "lang": "en",
   "dir": "ltr",
   "prefer_related_applications": false,
+  "related_applications": [],
+  "iarc_rating_id": "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
   "icons": [
     {
       "src": "icon-192.png",
@@ -39,6 +42,13 @@
       "type": "image/png",
       "form_factor": "narrow",
       "label": "AGRIMETS home screen with subject picker and mock tests"
+    },
+    {
+      "src": "screenshot-wide.png",
+      "sizes": "1280x800",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "AGRIMETS desktop view with subjects and mock tests"
     }
   ],
   "categories": ["education", "productivity"]
