@@ -1895,10 +1895,12 @@ async function manualRefresh() {
 
   btn.classList.add('updating');
   TG.Haptic.medium();
-  showToast('🔄 Fetching latest questions…', 2000);
+  showToast('🔄 Fetching latest data…', 2000);
 
+  // Clear both caches — card sheet + mock test sheet
   ls_remove(LS.QUESTIONS);
   ls_remove(LS.CACHE_TIME);
+  MockData.allRows = [];   // force re-fetch next time Mock Tests is opened
 
   try {
     const fresh = await fetchQuestions();
@@ -1917,7 +1919,7 @@ async function manualRefresh() {
       }
     }
 
-    showToast(`✅ Updated! ${fresh.length} questions loaded.`, 2500);
+    showToast(`✅ Updated! ${fresh.length} cards loaded. Mock tests will refresh on next open.`, 3000);
     TG.Haptic.success();
   } catch (err) {
     showToast('❌ Update failed — check connection', 3000);
@@ -2495,43 +2497,31 @@ function _initGlossarySheet() {
 //  COLUMNS:   id | category | test_no | question |
 //             opt_a | opt_b | opt_c | opt_d | opt_e | answer
 //
-//  NAVIGATION FLOW:
-//  Mock Tests button
-//    → Category screen  (groups by "category" column)
-//      → Test list      (groups by "test_no" within category)
-//        → Arena        (runs the test)
-//          → Results
-//
-//  SPECIAL CATEGORY: "Grand Test" — 100 random Qs from ALL rows
+//  HOW CATEGORIES WORK:
+//  — Every unique value in the "category" column becomes one tile.
+//  — No code changes needed when you add a new category to the sheet.
+//  — The Update button clears both sheet caches (cards + mock tests).
+//  — A "Grand Test" tile (100 random Qs from ALL rows) is always shown.
 // ════════════════════════════════════════════════════════════════
 
-// Category definitions — add new ones here freely.
-// icon: emoji  |  key: exact value in the "category" column of your sheet
-// (Grand Test is special — it picks 100 random Qs from ALL rows)
-const MOCK_CATEGORIES = [
-  {
-    key:         '__grand__',
-    name:        'Grand Test',
-    icon:        '🏆',
-    desc:        '100 random questions from all categories',
-    grand:       true,
-    grandCount:  100,
-  },
-  {
-    key:  'Test Series',
-    name: 'Test Series',
-    icon: '📋',
-    desc: 'Full-length practice tests',
-  },
-  {
-    key:  'NIMRAJ Sunday',
-    name: 'NIMRAJ Sunday Test',
-    icon: '☀️',
-    desc: 'NIMRAJ Sunday special tests',
-  },
-  // ── Add more categories below ─────────────────────────────
-  // { key: 'Agronomy Special', name: 'Agronomy Special', icon: '🌾', desc: '...' },
+// Emoji auto-assigned by keyword match in the category name
+const _CAT_EMOJI_MAP = [
+  ['grand',      '🏆'], ['agronomy',  '🌾'], ['soil',     '🌱'],
+  ['horticulture','🍎'],['fishery',   '🐟'], ['fish',     '🐟'],
+  ['forestry',   '🌲'], ['seed',      '🌰'], ['animal',   '🐄'],
+  ['dairy',      '🥛'], ['poultry',   '🐓'], ['icar',     '🏛'],
+  ['extension',  '📡'], ['economics', '📈'], ['economy',  '📈'],
+  ['nimraj',     '☀️'], ['sunday',    '📅'], ['series',   '📋'],
+  ['special',    '⭐'], ['full',      '📝'], ['mock',     '📝'],
 ];
+
+function _catEmoji(name) {
+  const lower = name.toLowerCase();
+  for (const [kw, em] of _CAT_EMOJI_MAP) {
+    if (lower.includes(kw)) return em;
+  }
+  return '📋'; // default
+}
 
 let MockData = {
   allRows:         [],   // All rows fetched from MockTests tab (cached)
@@ -2562,7 +2552,7 @@ async function _openMockCategories() {
   const subEl     = document.getElementById('mock-cat-sub');
   if (catListEl) catListEl.innerHTML = '<div class="mock-list-loading">⏳ Loading…</div>';
 
-  // Fetch all rows once and cache
+  // Fetch all rows — use cache unless cleared by Update button
   if (MockData.allRows.length === 0) {
     try {
       const url = `https://opensheet.elk.sh/${CONFIG.SPREADSHEET_ID}/MockTests`;
@@ -2590,62 +2580,72 @@ async function _openMockCategories() {
     }
   }
 
-  // Count questions per category key for the desc
-  const countByKey = {};
+  // ── Build category list purely from sheet data ────────────
+  // Group rows by their category value (case-insensitive, trimmed)
+  const countByNorm = {};  // normalised → count
+  const normToRaw   = {};  // normalised → original casing (first seen)
   MockData.allRows.forEach(r => {
-    const cat = r.category || 'Test Series';
-    countByKey[cat] = (countByKey[cat] || 0) + 1;
+    const raw  = (r.category || 'Uncategorised').trim();
+    const norm = raw.toLowerCase();
+    countByNorm[norm] = (countByNorm[norm] || 0) + 1;
+    if (!normToRaw[norm]) normToRaw[norm] = raw; // preserve original spelling
   });
 
-  if (subEl) subEl.textContent = 'Choose a category to begin';
-  _renderMockCategories(countByKey);
+  // Sort categories alphabetically for consistent ordering
+  const cats = Object.keys(countByNorm)
+    .sort((a, b) => a.localeCompare(b))
+    .map(norm => ({
+      key:   normToRaw[norm],  // original spelling from sheet
+      norm,
+      count: countByNorm[norm],
+    }));
+
+  if (subEl) subEl.textContent =
+    `${cats.length} categor${cats.length !== 1 ? 'ies' : 'y'} · ${MockData.allRows.length} total questions`;
+
+  _renderMockCategories(cats);
 }
 
-function _renderMockCategories(countByKey) {
+function _renderMockCategories(cats) {
   const listEl = document.getElementById('mock-category-list');
   if (!listEl) return;
   listEl.innerHTML = '';
 
-  MOCK_CATEGORIES.forEach((cat, i) => {
-    // Skip non-grand categories that have 0 questions in the sheet
-    if (!cat.grand && !countByKey[cat.key]) return;
+  // ── Grand Test tile (always first) ───────────────────────
+  const grandCard = document.createElement('div');
+  grandCard.className = 'mock-cat-card grand';
+  grandCard.style.animationDelay = '0s';
+  grandCard.innerHTML = `
+    <div class="mock-cat-icon">🏆</div>
+    <div class="mock-cat-info">
+      <div class="mock-cat-name">Grand Test</div>
+      <div class="mock-cat-meta">100 random questions from all categories · −0.25 marking</div>
+    </div>
+    <span class="mock-cat-arrow">›</span>
+  `;
+  grandCard.addEventListener('click', () => {
+    TG.Haptic.medium();
+    const pool = shuffle([...MockData.allRows]).slice(0, 100);
+    _startMockTest({ testNo: 'Grand', name: `Grand Test (${pool.length} Qs)`, questions: pool });
+  });
+  listEl.appendChild(grandCard);
 
-    const totalQ = cat.grand
-      ? MockData.allRows.length
-      : (countByKey[cat.key] || 0);
-
+  // ── One tile per category from sheet ─────────────────────
+  cats.forEach((cat, i) => {
     const card = document.createElement('div');
-    card.className = 'mock-cat-card' + (cat.grand ? ' grand' : '');
-    card.style.animationDelay = (i * 0.05) + 's';
+    card.className = 'mock-cat-card';
+    card.style.animationDelay = ((i + 1) * 0.05) + 's';
     card.innerHTML = `
-      <div class="mock-cat-icon">${cat.icon}</div>
+      <div class="mock-cat-icon">${_catEmoji(cat.key)}</div>
       <div class="mock-cat-info">
-        <div class="mock-cat-name">${_escHtml(cat.name)}</div>
-        <div class="mock-cat-meta">${_escHtml(cat.desc)} · ${totalQ} questions</div>
+        <div class="mock-cat-name">${_escHtml(cat.key)}</div>
+        <div class="mock-cat-meta">${cat.count} questions · −0.25 negative marking</div>
       </div>
       <span class="mock-cat-arrow">›</span>
     `;
-    card.addEventListener('click', () => {
-      if (cat.grand) {
-        _startGrandTest(cat.grandCount);
-      } else {
-        _openCategoryTests(cat);
-      }
-    });
+    card.addEventListener('click', () => _openCategoryTests(cat));
     listEl.appendChild(card);
   });
-}
-
-// ── STEP 2a: Grand Test — 100 random Qs from all rows ───────
-function _startGrandTest(count) {
-  TG.Haptic.medium();
-  const pool = shuffle([...MockData.allRows]).slice(0, count);
-  const test = {
-    testNo: 'Grand',
-    name:   `Grand Test (${pool.length} Qs)`,
-    questions: pool,
-  };
-  _startMockTest(test);
 }
 
 // ── STEP 2b: Open test list for a category ──────────────────
@@ -2653,8 +2653,9 @@ function _openCategoryTests(cat) {
   TG.Haptic.medium();
   MockData.currentCategory = cat;
 
+  // Filter rows using pre-normalised key
   const rows = MockData.allRows.filter(r =>
-    (r.category || 'Test Series') === cat.key
+    (r.category || 'Uncategorised').trim().toLowerCase() === cat.norm
   );
 
   // Group by test_no within this category
@@ -2672,14 +2673,13 @@ function _openCategoryTests(cat) {
     })
     .map(([testNo, questions]) => ({
       testNo,
-      name: `${cat.name} — Test ${testNo}`,
+      name: `${cat.key} — Test ${testNo}`,
       questions,
     }));
 
-  // Update list header
   const titleEl = document.querySelector('#mock-list-view .mock-list-title');
   const subEl   = document.getElementById('mock-list-sub');
-  if (titleEl) titleEl.textContent = cat.name;
+  if (titleEl) titleEl.textContent = cat.key;
   if (subEl)   subEl.textContent   = `${MockData.testList.length} test${MockData.testList.length !== 1 ? 's' : ''} available`;
 
   _mockShow('mock-list-view');
