@@ -1022,6 +1022,8 @@ function showSubjectPicker() {
 
   // Re-render so counts are fresh
   renderSubjectPicker();
+  // Refresh Sunday Mega banner state
+  _renderSundayMegaBanner();
   TG.Haptic.select();
 }
 
@@ -2491,59 +2493,145 @@ function _initGlossarySheet() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  MOCK TEST ENGINE  — 3-level navigation
+//  MOCK TEST ENGINE  — scheduled unlocks + dynamic categories
 //
-//  SHEET TAB: "MockTests"
-//  COLUMNS:   id | category | test_no | question |
-//             opt_a | opt_b | opt_c | opt_d | opt_e | answer
+//  SHEET TAB : "MockTests"
+//  COLUMNS   : id | category | test_no | question |
+//              opt_a | opt_b | opt_c | opt_d | opt_e | answer
 //
-//  HOW CATEGORIES WORK:
-//  — Every unique value in the "category" column becomes one tile.
-//  — No code changes needed when you add a new category to the sheet.
-//  — The Update button clears both sheet caches (cards + mock tests).
-//  — A "Grand Test" tile (100 random Qs from ALL rows) is always shown.
+//  SCHEDULE  :
+//   • Every day   8 PM  → "Test Series"  (next sequential test unlocks)
+//   • Every day   9 PM  → "NIMRAJ Sunday" (next sequential test unlocks)
+//   • Every Sunday 10PM → Sunday Mega Test (60 random, never repeat)
+//
+//  To change unlock times → edit MOCK_SCHEDULE below.
+//  To add a new daily-unlock category → add one entry to MOCK_SCHEDULE.
+//  All other categories from sheet appear automatically with no schedule.
 // ════════════════════════════════════════════════════════════════
 
-// Emoji auto-assigned by keyword match in the category name
-const _CAT_EMOJI_MAP = [
-  ['grand',      '🏆'], ['agronomy',  '🌾'], ['soil',     '🌱'],
-  ['horticulture','🍎'],['fishery',   '🐟'], ['fish',     '🐟'],
-  ['forestry',   '🌲'], ['seed',      '🌰'], ['animal',   '🐄'],
-  ['dairy',      '🥛'], ['poultry',   '🐓'], ['icar',     '🏛'],
-  ['extension',  '📡'], ['economics', '📈'], ['economy',  '📈'],
-  ['nimraj',     '☀️'], ['sunday',    '📅'], ['series',   '📋'],
-  ['special',    '⭐'], ['full',      '📝'], ['mock',     '📝'],
+// ── Schedule config — only categories listed here get daily unlock ──
+// catNorm  : lowercase version of the "category" column value in sheet
+// unlockHour: 24h integer (20 = 8 PM, 21 = 9 PM)
+const MOCK_SCHEDULE = [
+  { catNorm: 'test series',   unlockHour: 20 },
+  { catNorm: 'nimraj sunday', unlockHour: 21 },
 ];
+const SUNDAY_MEGA_HOUR  = 22;   // 10 PM every Sunday
+const SUNDAY_MEGA_COUNT = 60;   // questions per Sunday Mega Test
 
+// ── Emoji auto-assign by category name keyword ───────────────
+const _CAT_EMOJI_MAP = [
+  ['agronomy','🌾'],['soil','🌱'],['horticulture','🍎'],
+  ['fishery','🐟'],['fish','🐟'],['forestry','🌲'],
+  ['seed','🌰'],['animal','🐄'],['dairy','🥛'],
+  ['poultry','🐓'],['icar','🏛'],['extension','📡'],
+  ['economics','📈'],['economy','📈'],['nimraj','☀️'],
+  ['sunday','📅'],['series','📋'],['special','⭐'],
+  ['full','📝'],['agri','🌿'],
+];
 function _catEmoji(name) {
   const lower = name.toLowerCase();
-  for (const [kw, em] of _CAT_EMOJI_MAP) {
-    if (lower.includes(kw)) return em;
-  }
-  return '📋'; // default
+  for (const [kw, em] of _CAT_EMOJI_MAP) if (lower.includes(kw)) return em;
+  return '📋';
 }
 
 let MockData = {
-  allRows:         [],   // All rows fetched from MockTests tab (cached)
-  currentCategory: null, // Category object currently browsed
-  testList:        [],   // Tests within the current category
-  currentTest:     null, // Test currently running
-  questions:       [],   // Questions for the active test
-  currentIndex:    0,
-  history:         [],   // { question, selected, correct, status }
-  timerInterval:   null,
+  allRows:           [],
+  currentCategory:   null,
+  testList:          [],
+  currentTest:       null,
+  questions:         [],
+  currentIndex:      0,
+  history:           [],
+  timerInterval:     null,
+  countdownInterval: null,  // live countdown on category screen
 };
 
-// ── Show/hide mock screens ───────────────────────────────────
+// ── Show/hide mock screens ────────────────────────────────────
 function _mockShow(id) {
   ['subject-picker','mock-category-view','mock-list-view',
    'mock-arena','mock-results'].forEach(v => {
-    const el = document.getElementById(v);
-    if (el) el.classList.toggle('hidden', v !== id);
+    document.getElementById(v)?.classList.toggle('hidden', v !== id);
   });
+  // Stop countdown when leaving category screen
+  if (id !== 'mock-category-view') {
+    clearInterval(MockData.countdownInterval);
+    MockData.countdownInterval = null;
+  }
 }
 
-// ── STEP 1: Open category screen ────────────────────────────
+// ────────────────────────────────────────────────────────────
+//  SCHEDULE HELPERS
+// ────────────────────────────────────────────────────────────
+
+/** Seconds until a given hour today (0 if already past) */
+function _secsUntilHour(h) {
+  const now = new Date();
+  const t   = new Date(now);
+  t.setHours(h, 0, 0, 0);
+  return t <= now ? 0 : Math.floor((t - now) / 1000);
+}
+
+/** Format seconds as "2h 04m 30s" / "04m 30s" / "30s" */
+function _fmtCountdown(s) {
+  if (s <= 0) return 'Unlocking…';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`;
+  if (m > 0) return `${m}m ${String(sec).padStart(2,'0')}s`;
+  return `${sec}s`;
+}
+
+/**
+ * Returns "today's" test_no for a scheduled category.
+ * Advances by one each calendar day; cycles when all tests used.
+ * Stored in localStorage so it persists across sessions.
+ */
+function _getDailyTestNo(catNorm, availableTestNos) {
+  const key     = 'dca_daily_' + catNorm.replace(/\s+/g,'_');
+  const stored  = ls_get(key, { date: '', testNo: null, used: [] });
+  const todayStr = today();
+
+  if (stored.date === todayStr && stored.testNo) return stored.testNo;
+
+  // Sort numerically
+  const sorted = availableTestNos.slice().sort((a, b) => {
+    const na = parseFloat(a), nb = parseFloat(b);
+    return !isNaN(na) && !isNaN(nb) ? na - nb : String(a).localeCompare(String(b));
+  });
+
+  const used = Array.isArray(stored.used) ? stored.used : [];
+  let next = sorted.find(t => !used.includes(t));
+  if (!next) { used.length = 0; next = sorted[0]; } // cycle
+
+  ls_set(key, { date: todayStr, testNo: next, used: [...used, next] });
+  return next;
+}
+
+/**
+ * Returns 60 questions for Sunday Mega Test, never repeating
+ * across Sundays. Uses question id (or question text as fallback).
+ * Resets automatically when all questions have been used.
+ */
+function _getSundayMegaQuestions() {
+  const usedKey = 'dca_sunday_used';
+  const usedArr = ls_get(usedKey, []);
+  const usedSet = new Set(usedArr);
+
+  const pool = MockData.allRows.filter(r => !usedSet.has(r.id || r.question));
+  const src  = pool.length >= SUNDAY_MEGA_COUNT ? pool : MockData.allRows;
+  if (pool.length < SUNDAY_MEGA_COUNT) ls_set(usedKey, []); // reset cycle
+
+  const chosen = shuffle([...src]).slice(0, SUNDAY_MEGA_COUNT);
+  ls_set(usedKey, [...(pool.length >= SUNDAY_MEGA_COUNT ? usedArr : []),
+                   ...chosen.map(r => r.id || r.question)]);
+  return chosen;
+}
+
+// ────────────────────────────────────────────────────────────
+//  OPEN CATEGORY SCREEN
+// ────────────────────────────────────────────────────────────
 async function _openMockCategories() {
   TG.Haptic.medium();
   _mockShow('mock-category-view');
@@ -2552,7 +2640,7 @@ async function _openMockCategories() {
   const subEl     = document.getElementById('mock-cat-sub');
   if (catListEl) catListEl.innerHTML = '<div class="mock-list-loading">⏳ Loading…</div>';
 
-  // Fetch all rows — use cache unless cleared by Update button
+  // Fetch once; cleared by Update button
   if (MockData.allRows.length === 0) {
     try {
       const url = `https://opensheet.elk.sh/${CONFIG.SPREADSHEET_ID}/MockTests`;
@@ -2560,7 +2648,6 @@ async function _openMockCategories() {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const raw = await res.json();
       if (!Array.isArray(raw) || raw.length === 0) throw new Error('Empty');
-
       MockData.allRows = raw.map(r => {
         const n = {};
         Object.keys(r).forEach(k => {
@@ -2573,37 +2660,185 @@ async function _openMockCategories() {
       if (catListEl) catListEl.innerHTML =
         `<div class="mock-list-loading" style="color:var(--red)">
            ❌ Could not load tests.<br>
-           <small>Make sure your sheet tab is named exactly <strong>MockTests</strong>
-           and is shared as "Anyone with link – Viewer".</small>
+           <small>Tab must be named <strong>MockTests</strong>,
+           shared as "Anyone with link – Viewer".</small>
          </div>`;
       return;
     }
   }
 
-  // ── Build category list purely from sheet data ────────────
-  // Group rows by their category value (case-insensitive, trimmed)
-  const countByNorm = {};  // normalised → count
-  const normToRaw   = {};  // normalised → original casing (first seen)
+  // Build category map from sheet rows
+  const countByNorm = {}, normToRaw = {}, testsByNorm = {};
   MockData.allRows.forEach(r => {
     const raw  = (r.category || 'Uncategorised').trim();
     const norm = raw.toLowerCase();
     countByNorm[norm] = (countByNorm[norm] || 0) + 1;
-    if (!normToRaw[norm]) normToRaw[norm] = raw; // preserve original spelling
+    if (!normToRaw[norm]) normToRaw[norm] = raw;
+    if (!testsByNorm[norm]) testsByNorm[norm] = new Set();
+    testsByNorm[norm].add(r.test_no || '1');
   });
 
-  // Sort categories alphabetically for consistent ordering
   const cats = Object.keys(countByNorm)
     .sort((a, b) => a.localeCompare(b))
     .map(norm => ({
-      key:   normToRaw[norm],  // original spelling from sheet
+      key:     normToRaw[norm],
       norm,
-      count: countByNorm[norm],
+      count:   countByNorm[norm],
+      testNos: [...testsByNorm[norm]],
     }));
 
   if (subEl) subEl.textContent =
-    `${cats.length} categor${cats.length !== 1 ? 'ies' : 'y'} · ${MockData.allRows.length} total questions`;
+    `${cats.length} categor${cats.length !== 1 ? 'ies' : 'y'} · ${MockData.allRows.length} questions`;
 
   _renderMockCategories(cats);
+  _startCategoryCountdown(cats);
+}
+
+// ────────────────────────────────────────────────────────────
+//  RENDER CATEGORY SCREEN
+// ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  SUNDAY MEGA BANNER  — lives on the home screen
+//  Visible every day: shows "Next Sunday" countdown on weekdays,
+//  shows live countdown on Sunday before 10 PM,
+//  goes LIVE on Sunday after 10 PM.
+// ════════════════════════════════════════════════════════════════
+
+let _sundayBannerInterval = null;
+
+function _renderSundayMegaBanner() {
+  const banner = document.getElementById('sunday-mega-banner');
+  if (!banner) return;
+
+  const now      = new Date();
+  const isSunday = now.getDay() === 0;
+  const hour     = now.getHours();
+  const isLive   = isSunday && hour >= SUNDAY_MEGA_HOUR;
+
+  // Always show the banner
+  banner.classList.remove('hidden');
+
+  if (isLive) {
+    // ── LIVE state ────────────────────────────────────────────
+    banner.className = 'sunday-mega-banner smb-live';
+    banner.innerHTML = `
+      <div class="smb-glow-ring"></div>
+      <div class="smb-icon">🏆</div>
+      <div class="smb-body">
+        <div class="smb-title">Sunday Mega Test</div>
+        <div class="smb-meta">${SUNDAY_MEGA_COUNT} questions · All categories · −0.25 marking</div>
+        <div class="smb-live-pill">🟢 LIVE NOW — Tap to start!</div>
+      </div>
+      <span class="smb-arrow">›</span>
+    `;
+    banner.onclick = _launchSundayMega;
+    banner.style.cursor = 'pointer';
+  } else {
+    // ── Locked / countdown state ──────────────────────────────
+    banner.className = 'sunday-mega-banner smb-locked';
+    banner.style.cursor = 'default';
+    banner.onclick = null;
+
+    // Compute seconds to next Sunday 10 PM
+    let secsLeft;
+    if (isSunday && hour < SUNDAY_MEGA_HOUR) {
+      secsLeft = _secsUntilHour(SUNDAY_MEGA_HOUR);
+    } else {
+      // Days until next Sunday
+      const daysUntil = isSunday ? 7 : (7 - now.getDay()) % 7 || 7;
+      const nextSun = new Date(now);
+      nextSun.setDate(now.getDate() + daysUntil);
+      nextSun.setHours(SUNDAY_MEGA_HOUR, 0, 0, 0);
+      secsLeft = Math.max(0, Math.floor((nextSun - now) / 1000));
+    }
+
+    const daysLeft = Math.floor(secsLeft / 86400);
+    const ctLabel  = daysLeft >= 2
+      ? `In ${daysLeft} days`
+      : _fmtCountdown(secsLeft);
+
+    banner.innerHTML = `
+      <div class="smb-icon smb-icon-lock">🏆</div>
+      <div class="smb-body">
+        <div class="smb-title">Sunday Mega Test</div>
+        <div class="smb-meta">${SUNDAY_MEGA_COUNT} questions · All categories · −0.25 marking</div>
+        <div class="smb-countdown" id="smb-countdown-text">
+          🔒 Unlocks in <strong>${ctLabel}</strong>
+        </div>
+      </div>
+      <span class="smb-arrow smb-arrow-lock">⏳</span>
+    `;
+  }
+}
+
+async function _launchSundayMega() {
+  TG.Haptic.medium();
+  // If mock data not yet loaded, fetch it first
+  if (MockData.allRows.length === 0) {
+    showToast('⏳ Loading questions…', 1500);
+    try {
+      const url = `https://opensheet.elk.sh/${CONFIG.SPREADSHEET_ID}/MockTests`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const raw = await res.json();
+      MockData.allRows = raw.map(r => {
+        const n = {};
+        Object.keys(r).forEach(k => {
+          n[k.toLowerCase().trim()] = String(r[k] ?? '').trim();
+        });
+        return n;
+      });
+    } catch (err) {
+      showToast('❌ Could not load questions — check connection', 3000);
+      TG.Haptic.error();
+      return;
+    }
+  }
+  const qs = _getSundayMegaQuestions();
+  _startMockTest({ testNo: 'Sunday', name: 'Sunday Mega Test', questions: qs });
+}
+
+function _initSundayMegaBanner() {
+  // Initial render
+  _renderSundayMegaBanner();
+
+  // Tick every second to update the countdown text
+  clearInterval(_sundayBannerInterval);
+  _sundayBannerInterval = setInterval(() => {
+    const banner = document.getElementById('sunday-mega-banner');
+    if (!banner) return;
+
+    const now      = new Date();
+    const isSunday = now.getDay() === 0;
+    const hour     = now.getHours();
+    const isLive   = isSunday && hour >= SUNDAY_MEGA_HOUR;
+
+    if (isLive && !banner.classList.contains('smb-live')) {
+      // Just flipped live — full re-render
+      _renderSundayMegaBanner();
+      return;
+    }
+
+    if (!isLive) {
+      // Just update the countdown text efficiently
+      const ctEl = document.getElementById('smb-countdown-text');
+      if (!ctEl) return;
+
+      let secsLeft;
+      if (isSunday && hour < SUNDAY_MEGA_HOUR) {
+        secsLeft = _secsUntilHour(SUNDAY_MEGA_HOUR);
+      } else {
+        const daysUntil = isSunday ? 7 : (7 - now.getDay()) % 7 || 7;
+        const nextSun   = new Date(now);
+        nextSun.setDate(now.getDate() + daysUntil);
+        nextSun.setHours(SUNDAY_MEGA_HOUR, 0, 0, 0);
+        secsLeft = Math.max(0, Math.floor((nextSun - now) / 1000));
+      }
+      const daysLeft = Math.floor(secsLeft / 86400);
+      const label    = daysLeft >= 2 ? `In ${daysLeft} days` : _fmtCountdown(secsLeft);
+      ctEl.innerHTML = `🔒 Unlocks in <strong>${label}</strong>`;
+    }
+  }, 1000);
 }
 
 function _renderMockCategories(cats) {
@@ -2611,18 +2846,87 @@ function _renderMockCategories(cats) {
   if (!listEl) return;
   listEl.innerHTML = '';
 
-  // ── Grand Test tile (always first) ───────────────────────
+  const hour = new Date().getHours();
+
+  // ── Section 1: TODAY'S SCHEDULE (daily tests only) ──────────
+  const schedItems = [];
+
+  MOCK_SCHEDULE.forEach(cfg => {
+    const cat = cats.find(c => c.norm === cfg.catNorm);
+    if (!cat) return;
+
+    const testNo     = _getDailyTestNo(cat.norm, cat.testNos);
+    const rows       = MockData.allRows.filter(r =>
+      (r.category || '').trim().toLowerCase() === cat.norm &&
+      (r.test_no || '1') === testNo
+    );
+    const isUnlocked = hour >= cfg.unlockHour;
+    const secsLeft   = _secsUntilHour(cfg.unlockHour);
+
+    schedItems.push({
+      type: 'daily', cat, testNo, rows, isUnlocked, secsLeft,
+      unlockHour: cfg.unlockHour,
+      schedId: 'sched_' + cat.norm.replace(/\s+/g,'_'),
+    });
+  });
+
+  // NOTE: Sunday Mega is no longer here — it lives on the home screen banner
+
+  if (schedItems.length > 0) {
+    // Section label
+    listEl.appendChild(_mockSectionLabel("📌 Today's Tests"));
+
+    schedItems.forEach(item => {
+      const card = document.createElement('div');
+      card.id        = item.schedId;
+      card.className = 'mock-sched-card' + (item.isUnlocked ? ' unlocked' : ' locked');
+
+      if (item.type === 'sunday') {
+        card.innerHTML = _schedCardHTML({
+          isUnlocked: item.isUnlocked,
+          name:       '🏆 Sunday Mega Test',
+          meta:       `${SUNDAY_MEGA_COUNT} random questions · All categories · −0.25`,
+          secsLeft:   item.secsLeft,
+          schedId:    item.schedId,
+        });
+        if (item.isUnlocked) {
+          card.addEventListener('click', () => {
+            TG.Haptic.medium();
+            const qs = _getSundayMegaQuestions();
+            _startMockTest({ testNo: 'Sunday', name: 'Sunday Mega Test', questions: qs });
+          });
+        }
+      } else {
+        const label = `${item.cat.key} — Test ${item.testNo}`;
+        card.innerHTML = _schedCardHTML({
+          isUnlocked: item.isUnlocked,
+          name:       label,
+          meta:       `${item.rows.length} questions · −0.25 negative marking`,
+          secsLeft:   item.secsLeft,
+          schedId:    item.schedId,
+        });
+        if (item.isUnlocked) {
+          card.addEventListener('click', () => {
+            _startMockTest({ testNo: item.testNo, name: label, questions: item.rows });
+          });
+        }
+      }
+      listEl.appendChild(card);
+    });
+
+    listEl.appendChild(_mockSectionLabel('📚 All Categories'));
+  }
+
+  // ── Section 2: Grand Test (always) ────────────────────────
   const grandCard = document.createElement('div');
   grandCard.className = 'mock-cat-card grand';
-  grandCard.style.animationDelay = '0s';
   grandCard.innerHTML = `
     <div class="mock-cat-icon">🏆</div>
     <div class="mock-cat-info">
       <div class="mock-cat-name">Grand Test</div>
-      <div class="mock-cat-meta">100 random questions from all categories · −0.25 marking</div>
+      <div class="mock-cat-meta">100 random questions from all categories · −0.25</div>
     </div>
-    <span class="mock-cat-arrow">›</span>
-  `;
+    <span class="mock-cat-arrow">›</span>`;
   grandCard.addEventListener('click', () => {
     TG.Haptic.medium();
     const pool = shuffle([...MockData.allRows]).slice(0, 100);
@@ -2630,7 +2934,7 @@ function _renderMockCategories(cats) {
   });
   listEl.appendChild(grandCard);
 
-  // ── One tile per category from sheet ─────────────────────
+  // ── Section 3: All categories from sheet ──────────────────
   cats.forEach((cat, i) => {
     const card = document.createElement('div');
     card.className = 'mock-cat-card';
@@ -2639,26 +2943,84 @@ function _renderMockCategories(cats) {
       <div class="mock-cat-icon">${_catEmoji(cat.key)}</div>
       <div class="mock-cat-info">
         <div class="mock-cat-name">${_escHtml(cat.key)}</div>
-        <div class="mock-cat-meta">${cat.count} questions · −0.25 negative marking</div>
+        <div class="mock-cat-meta">${cat.count} questions · ${cat.testNos.length} test${cat.testNos.length !== 1 ? 's' : ''}</div>
       </div>
-      <span class="mock-cat-arrow">›</span>
-    `;
+      <span class="mock-cat-arrow">›</span>`;
     card.addEventListener('click', () => _openCategoryTests(cat));
     listEl.appendChild(card);
   });
 }
 
-// ── STEP 2b: Open test list for a category ──────────────────
+// ── Build schedule card inner HTML ────────────────────────────
+function _schedCardHTML({ isUnlocked, name, meta, secsLeft, schedId }) {
+  const badge = isUnlocked
+    ? `<div class="sched-badge badge-live">🟢 LIVE</div>`
+    : `<div class="sched-badge badge-lock">🔒</div>`;
+
+  const status = isUnlocked
+    ? `<div class="sched-live-label">Tap to start now!</div>`
+    : `<div class="sched-countdown" data-sched-id="${schedId}">Unlocks in ${_fmtCountdown(secsLeft)}</div>`;
+
+  return `
+    ${badge}
+    <div class="sched-info">
+      <div class="sched-name">${_escHtml(name)}</div>
+      <div class="sched-meta">${_escHtml(meta)}</div>
+      ${status}
+    </div>
+    <span class="sched-arrow">${isUnlocked ? '›' : '⏳'}</span>`;
+}
+
+// ── Section divider label ─────────────────────────────────────
+function _mockSectionLabel(text) {
+  const el = document.createElement('div');
+  el.className   = 'mock-section-label';
+  el.textContent = text;
+  return el;
+}
+
+// ────────────────────────────────────────────────────────────
+//  LIVE COUNTDOWN TICKER
+// ────────────────────────────────────────────────────────────
+function _startCategoryCountdown(cats) {
+  clearInterval(MockData.countdownInterval);
+
+  MockData.countdownInterval = setInterval(() => {
+    const listEl = document.getElementById('mock-category-list');
+    if (!listEl) { clearInterval(MockData.countdownInterval); return; }
+
+    const hour = new Date().getHours();
+    let needsRebuild = false;
+
+    listEl.querySelectorAll('.sched-countdown[data-sched-id]').forEach(el => {
+      const id   = el.dataset.schedId;
+      const norm = id.replace('sched_', '').replace(/_/g, ' ');
+      const unlockHour = MOCK_SCHEDULE.find(c => c.catNorm === norm)?.unlockHour;
+      if (unlockHour === undefined) return;
+
+      const secs = _secsUntilHour(unlockHour);
+      if (secs <= 0) { needsRebuild = true; return; }
+      el.textContent = `Unlocks in ${_fmtCountdown(secs)}`;
+    });
+
+    if (needsRebuild) {
+      clearInterval(MockData.countdownInterval);
+      _openMockCategories(); // re-render to show LIVE badge
+    }
+  }, 1000);
+}
+
+// ────────────────────────────────────────────────────────────
+//  OPEN TEST LIST FOR A CATEGORY
+// ────────────────────────────────────────────────────────────
 function _openCategoryTests(cat) {
   TG.Haptic.medium();
   MockData.currentCategory = cat;
 
-  // Filter rows using pre-normalised key
   const rows = MockData.allRows.filter(r =>
     (r.category || 'Uncategorised').trim().toLowerCase() === cat.norm
   );
 
-  // Group by test_no within this category
   const groups = {};
   rows.forEach(r => {
     const t = r.test_no || '1';
@@ -2671,16 +3033,13 @@ function _openCategoryTests(cat) {
       const na = parseFloat(a), nb = parseFloat(b);
       return !isNaN(na) && !isNaN(nb) ? na - nb : a.localeCompare(b);
     })
-    .map(([testNo, questions]) => ({
-      testNo,
-      name: `${cat.key} — Test ${testNo}`,
-      questions,
-    }));
+    .map(([testNo, questions]) => ({ testNo, name: `${cat.key} — Test ${testNo}`, questions }));
 
   const titleEl = document.querySelector('#mock-list-view .mock-list-title');
   const subEl   = document.getElementById('mock-list-sub');
   if (titleEl) titleEl.textContent = cat.key;
-  if (subEl)   subEl.textContent   = `${MockData.testList.length} test${MockData.testList.length !== 1 ? 's' : ''} available`;
+  if (subEl)   subEl.textContent   =
+    `${MockData.testList.length} test${MockData.testList.length !== 1 ? 's' : ''} available`;
 
   _mockShow('mock-list-view');
   _renderMockTestList();
@@ -2701,14 +3060,15 @@ function _renderMockTestList() {
         <div class="mock-test-name">${_escHtml(test.name)}</div>
         <div class="mock-test-meta">${test.questions.length} questions · −0.25 negative marking</div>
       </div>
-      <span class="mock-test-arrow">›</span>
-    `;
+      <span class="mock-test-arrow">›</span>`;
     card.addEventListener('click', () => _startMockTest(test));
     listEl.appendChild(card);
   });
 }
 
-// ── STEP 3: Start a specific test ───────────────────────────
+// ────────────────────────────────────────────────────────────
+//  RUN A TEST
+// ────────────────────────────────────────────────────────────
 function _startMockTest(test) {
   TG.Haptic.medium();
   MockData.currentTest  = test;
@@ -2725,7 +3085,6 @@ function _startMockTest(test) {
   _loadMockQuestion();
 }
 
-// ── Load one question into the arena ────────────────────────
 function _loadMockQuestion() {
   const q = MockData.questions[MockData.currentIndex];
   if (!q) { _finishMock(); return; }
@@ -2735,18 +3094,17 @@ function _loadMockQuestion() {
   document.getElementById('mock-q-text').textContent = q.question || '';
 
   ['a','b','c','d','e'].forEach(o => {
-    const btn = document.getElementById('opt-' + o);
+    const btn  = document.getElementById('opt-' + o);
     if (!btn) return;
     const text = q['opt_' + o] || '';
-    btn.textContent      = text;
-    btn.className        = 'mock-opt';
-    btn.disabled         = false;
-    btn.style.display    = text ? '' : 'none';
-    btn.onclick          = text ? () => _handleMockAnswer(text, q.answer, q) : null;
+    btn.textContent   = text;
+    btn.className     = 'mock-opt';
+    btn.disabled      = false;
+    btn.style.display = text ? '' : 'none';
+    btn.onclick       = text ? () => _handleMockAnswer(text, q.answer, q) : null;
   });
 }
 
-// ── Handle answer tap ────────────────────────────────────────
 function _handleMockAnswer(selectedText, correctText, qObj) {
   TG.Haptic.light();
   const isCorrect = selectedText.trim() === correctText.trim();
@@ -2758,16 +3116,13 @@ function _handleMockAnswer(selectedText, correctText, qObj) {
   });
 
   MockData.history.push({
-    question: qObj.question,
-    selected: selectedText,
-    correct:  correctText,
-    status:   isCorrect ? 'correct' : 'wrong',
+    question: qObj.question, selected: selectedText,
+    correct: correctText, status: isCorrect ? 'correct' : 'wrong',
   });
 
   setTimeout(() => { MockData.currentIndex++; _loadMockQuestion(); }, 550);
 }
 
-// ── Score & results ──────────────────────────────────────────
 function _finishMock() {
   TG.Haptic.success();
   let c = 0, w = 0, s = 0;
@@ -2811,30 +3166,23 @@ function _renderMockReview(filter) {
     div.innerHTML = `
       <div class="rev-q">${_escHtml(h.question)}</div>
       <div class="rev-ans">✓ ${_escHtml(h.correct)}</div>
-      ${h.status === 'wrong' ? `<div class="rev-user">✗ You chose: ${_escHtml(h.selected)}</div>` : ''}
-    `;
+      ${h.status === 'wrong' ? `<div class="rev-user">✗ You chose: ${_escHtml(h.selected)}</div>` : ''}`;
     list.appendChild(div);
   });
 }
 
-// ── Wire all mock buttons ────────────────────────────────────
+// ── Wire all mock buttons ─────────────────────────────────────
 function _initMockButtons() {
-  // Main CTA → categories
   document.getElementById('btn-open-mock-list')?.addEventListener('click', _openMockCategories);
 
-  // Back: categories → subject picker
   document.getElementById('btn-mock-cat-back')?.addEventListener('click', () => {
-    _mockShow('subject-picker');
-    TG.Haptic.select();
+    _mockShow('subject-picker'); TG.Haptic.select();
   });
 
-  // Back: test list → categories
   document.getElementById('btn-mock-list-back')?.addEventListener('click', () => {
-    _mockShow('mock-category-view');
-    TG.Haptic.select();
+    _mockShow('mock-category-view'); TG.Haptic.select();
   });
 
-  // Skip
   document.getElementById('btn-mock-skip')?.addEventListener('click', () => {
     const q = MockData.questions[MockData.currentIndex];
     if (!q) return;
@@ -2844,31 +3192,21 @@ function _initMockButtons() {
     _loadMockQuestion();
   });
 
-  // Quit arena → back to test list (or categories for grand test)
   document.getElementById('btn-mock-exit')?.addEventListener('click', () => {
     TG.confirm('Quit this test? Your progress will be lost.', () => {
       clearInterval(MockData.timerInterval);
       TG.Haptic.warning();
-      // Grand test has no category to go back to
-      if (MockData.currentTest?.testNo === 'Grand') {
-        _mockShow('mock-category-view');
-      } else {
-        _mockShow('mock-list-view');
-      }
+      const special = ['Grand','Sunday'].includes(MockData.currentTest?.testNo);
+      special ? _mockShow('mock-category-view') : _mockShow('mock-list-view');
     });
   });
 
-  // Results back → test list (or categories for grand test)
   document.getElementById('btn-mock-home')?.addEventListener('click', () => {
     TG.Haptic.select();
-    if (MockData.currentTest?.testNo === 'Grand') {
-      _mockShow('mock-category-view');
-    } else {
-      _mockShow('mock-list-view');
-    }
+    const special = ['Grand','Sunday'].includes(MockData.currentTest?.testNo);
+    special ? _mockShow('mock-category-view') : _mockShow('mock-list-view');
   });
 
-  // Review filters
   document.querySelectorAll('.rev-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.rev-btn').forEach(b => b.classList.remove('active'));
@@ -2911,6 +3249,7 @@ async function boot() {
   _initGlossarySheet();
   _initDailyTarget();
   _initMockButtons();
+  _initSundayMegaBanner();
 
   // 7. Dismiss splash
   await _delay(300);
