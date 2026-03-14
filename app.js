@@ -2442,10 +2442,6 @@ function _initModeToggle() {
     swipeBtn.classList.toggle('active',  !State.cramMode);
     cramBtn.classList.toggle('active',    State.cramMode);
     TG.Haptic.select();
-    const sub = document.getElementById('subject-sub-text');
-    if (sub) sub.textContent = State.cramMode
-      ? 'Select a subject to open the full cheat sheet'
-      : 'Select any subject to start swiping cards';
   }
 
   swipeBtn.addEventListener('click', () => _setMode('swipe'));
@@ -2585,25 +2581,31 @@ function _fmtCountdown(s) {
 
 /**
  * Returns "today's" test_no for a scheduled category.
- * Advances by one each calendar day; cycles when all tests used.
- * Stored in localStorage so it persists across sessions.
+ * Advances by one each calendar day.
+ * Returns NULL when all available tests have been shown already
+ * (no cycling — ensures no phantom countdown when sheet is empty).
  */
 function _getDailyTestNo(catNorm, availableTestNos) {
-  const key     = 'dca_daily_' + catNorm.replace(/\s+/g,'_');
-  const stored  = ls_get(key, { date: '', testNo: null, used: [] });
+  if (!availableTestNos || availableTestNos.length === 0) return null;
+
+  const key      = 'dca_daily_' + catNorm.replace(/\s+/g,'_');
+  const stored   = ls_get(key, { date: '', testNo: null, used: [] });
   const todayStr = today();
 
+  // Already assigned today — return it
   if (stored.date === todayStr && stored.testNo) return stored.testNo;
 
-  // Sort numerically
+  // Sort numerically/alphabetically
   const sorted = availableTestNos.slice().sort((a, b) => {
     const na = parseFloat(a), nb = parseFloat(b);
     return !isNaN(na) && !isNaN(nb) ? na - nb : String(a).localeCompare(String(b));
   });
 
   const used = Array.isArray(stored.used) ? stored.used : [];
-  let next = sorted.find(t => !used.includes(t));
-  if (!next) { used.length = 0; next = sorted[0]; } // cycle
+  const next = sorted.find(t => !used.includes(t));
+
+  // All tests used — no cycling, no countdown
+  if (!next) return null;
 
   ls_set(key, { date: todayStr, testNo: next, used: [...used, next] });
   return next;
@@ -2715,59 +2717,54 @@ function _renderSundayMegaBanner() {
   const hour     = now.getHours();
   const isLive   = isSunday && hour >= SUNDAY_MEGA_HOUR;
 
-  // Always show the banner
   banner.classList.remove('hidden');
 
   if (isLive) {
-    // ── LIVE state ────────────────────────────────────────────
     banner.className = 'sunday-mega-banner smb-live';
+    banner.onclick   = _launchSundayMega;
     banner.innerHTML = `
-      <div class="smb-glow-ring"></div>
-      <div class="smb-icon">🏆</div>
-      <div class="smb-body">
-        <div class="smb-title">Sunday Mega Test</div>
-        <div class="smb-meta">${SUNDAY_MEGA_COUNT} questions · All categories · −0.25 marking</div>
-        <div class="smb-live-pill">🟢 LIVE NOW — Tap to start!</div>
+      <div class="smb-left">
+        <span class="smb-trophy">🏆</span>
+        <div class="smb-body">
+          <div class="smb-title">Sunday Mega Test</div>
+          <div class="smb-meta">${SUNDAY_MEGA_COUNT} Qs · All topics · −0.25</div>
+        </div>
       </div>
-      <span class="smb-arrow">›</span>
-    `;
-    banner.onclick = _launchSundayMega;
-    banner.style.cursor = 'pointer';
+      <div class="smb-right">
+        <span class="smb-live-badge">LIVE</span>
+        <span class="smb-chevron">›</span>
+      </div>`;
   } else {
-    // ── Locked / countdown state ──────────────────────────────
     banner.className = 'sunday-mega-banner smb-locked';
-    banner.style.cursor = 'default';
-    banner.onclick = null;
+    banner.onclick   = null;
 
-    // Compute seconds to next Sunday 10 PM
+    // Seconds to next Sunday 10 PM
     let secsLeft;
     if (isSunday && hour < SUNDAY_MEGA_HOUR) {
       secsLeft = _secsUntilHour(SUNDAY_MEGA_HOUR);
     } else {
-      // Days until next Sunday
       const daysUntil = isSunday ? 7 : (7 - now.getDay()) % 7 || 7;
-      const nextSun = new Date(now);
+      const nextSun   = new Date(now);
       nextSun.setDate(now.getDate() + daysUntil);
       nextSun.setHours(SUNDAY_MEGA_HOUR, 0, 0, 0);
       secsLeft = Math.max(0, Math.floor((nextSun - now) / 1000));
     }
 
     const daysLeft = Math.floor(secsLeft / 86400);
-    const ctLabel  = daysLeft >= 2
-      ? `In ${daysLeft} days`
-      : _fmtCountdown(secsLeft);
+    const label    = daysLeft >= 2 ? `${daysLeft}d` : _fmtCountdown(secsLeft);
 
     banner.innerHTML = `
-      <div class="smb-icon smb-icon-lock">🏆</div>
-      <div class="smb-body">
-        <div class="smb-title">Sunday Mega Test</div>
-        <div class="smb-meta">${SUNDAY_MEGA_COUNT} questions · All categories · −0.25 marking</div>
-        <div class="smb-countdown" id="smb-countdown-text">
-          🔒 Unlocks in <strong>${ctLabel}</strong>
+      <div class="smb-left">
+        <span class="smb-trophy smb-trophy-dim">🏆</span>
+        <div class="smb-body">
+          <div class="smb-title">Sunday Mega Test</div>
+          <div class="smb-meta">${SUNDAY_MEGA_COUNT} Qs · All topics · −0.25</div>
         </div>
       </div>
-      <span class="smb-arrow smb-arrow-lock">⏳</span>
-    `;
+      <div class="smb-right">
+        <span class="smb-countdown-badge" id="smb-countdown-text">${label}</span>
+        <span class="smb-lock">🔒</span>
+      </div>`;
   }
 }
 
@@ -2820,7 +2817,6 @@ function _initSundayMegaBanner() {
     }
 
     if (!isLive) {
-      // Just update the countdown text efficiently
       const ctEl = document.getElementById('smb-countdown-text');
       if (!ctEl) return;
 
@@ -2835,8 +2831,7 @@ function _initSundayMegaBanner() {
         secsLeft = Math.max(0, Math.floor((nextSun - now) / 1000));
       }
       const daysLeft = Math.floor(secsLeft / 86400);
-      const label    = daysLeft >= 2 ? `In ${daysLeft} days` : _fmtCountdown(secsLeft);
-      ctEl.innerHTML = `🔒 Unlocks in <strong>${label}</strong>`;
+      ctEl.textContent = daysLeft >= 2 ? `${daysLeft}d` : _fmtCountdown(secsLeft);
     }
   }, 1000);
 }
@@ -2855,11 +2850,17 @@ function _renderMockCategories(cats) {
     const cat = cats.find(c => c.norm === cfg.catNorm);
     if (!cat) return;
 
-    const testNo     = _getDailyTestNo(cat.norm, cat.testNos);
-    const rows       = MockData.allRows.filter(r =>
+    const testNo = _getDailyTestNo(cat.norm, cat.testNos);
+    // No test available for today in this category → skip entirely, no countdown
+    if (!testNo) return;
+
+    const rows = MockData.allRows.filter(r =>
       (r.category || '').trim().toLowerCase() === cat.norm &&
       (r.test_no || '1') === testNo
     );
+    // No rows found for this test_no → sheet doesn't have it yet → skip
+    if (rows.length === 0) return;
+
     const isUnlocked = hour >= cfg.unlockHour;
     const secsLeft   = _secsUntilHour(cfg.unlockHour);
 
