@@ -23,28 +23,6 @@ const TG = (() => {
     // Expand to full height
     twa.expand();
 
-    // ── Hide the top header bar (Bot name / × button) ────────
-    if (typeof twa.requestFullscreen === 'function') {
-      twa.requestFullscreen();
-    }
-
-    // ── Safe area: push app content below the status bar ─────
-    function _applySafeArea() {
-      const top    = twa.safeAreaInset?.top    ?? 0;
-      const bottom = twa.safeAreaInset?.bottom ?? 0;
-      const root   = document.documentElement;
-      root.style.setProperty('--tg-safe-top',    top    + 'px');
-      root.style.setProperty('--tg-safe-bottom', bottom + 'px');
-    }
-    _applySafeArea();
-    twa.onEvent('safeAreaChanged',   _applySafeArea);
-    twa.onEvent('fullscreenChanged', () => {
-      if (!twa.isFullscreen && typeof twa.requestFullscreen === 'function') {
-        twa.requestFullscreen();
-      }
-      _applySafeArea();
-    });
-
     // Apply Telegram's colour theme to CSS variables
     _applyTheme();
 
@@ -89,33 +67,80 @@ const TG = (() => {
   }
 
   // ── Back button logic ─────────────────────────────────────────
+  //
+  // Strategy:
+  //  • Inside Telegram: twa.BackButton.show() makes Android hardware/gesture
+  //    back fire through twa.BackButton.onClick instead of closing the app.
+  //  • Outside Telegram (browser): we push a dummy history entry so the browser
+  //    back button fires window.onpopstate instead of leaving the page.
+  //
+  // Whenever app navigates "deeper", call TG.pushBack(fn).
+  // Whenever app navigates "back up", call TG.popBack().
+  // The topmost handler always runs on back press.
+  // ─────────────────────────────────────────────────────────────
+
   let _backHandlers = [];
 
   function _setupBackButton() {
-    if (!twa?.BackButton) return;
+    // ── Telegram BackButton ────────────────────────────────────
+    if (twa?.BackButton) {
+      twa.BackButton.onClick(() => {
+        _fireBack();
+      });
+    }
 
-    twa.BackButton.onClick(() => {
-      // Run the topmost back handler; if none, hide button
+    // ── Browser / Android WebView popstate ────────────────────
+    // Push a dummy state now so popstate fires on back press
+    // instead of the browser navigating away.
+    window.addEventListener('popstate', () => {
       if (_backHandlers.length > 0) {
-        _backHandlers[_backHandlers.length - 1]();
-      } else {
-        twa.BackButton.hide();
+        // Re-push so next back press also fires
+        window.history.pushState({ appNav: true }, '');
+        _fireBack();
       }
     });
+    // Seed the history stack once
+    window.history.pushState({ appNav: true }, '');
   }
 
-  /** Push a back handler (e.g. when opening saved tab) */
+  function _fireBack() {
+    if (_backHandlers.length > 0) {
+      _backHandlers[_backHandlers.length - 1]();
+    } else {
+      // Nothing to go back to — hide button
+      twa?.BackButton?.hide();
+    }
+  }
+
+  /** Push a back handler — call this whenever navigating deeper */
   function pushBack(handler) {
     _backHandlers.push(handler);
     twa?.BackButton?.show();
+    // Ensure browser history has an entry to intercept
+    if (!twa) window.history.pushState({ appNav: true }, '');
   }
 
-  /** Pop a back handler */
+  /** Pop a back handler — call this when navigating back */
   function popBack() {
     _backHandlers.pop();
     if (_backHandlers.length === 0) {
       twa?.BackButton?.hide();
     }
+  }
+
+  /** Replace the topmost handler (e.g. when re-using a screen) */
+  function replaceBack(handler) {
+    if (_backHandlers.length > 0) {
+      _backHandlers[_backHandlers.length - 1] = handler;
+    } else {
+      pushBack(handler);
+    }
+  }
+
+  /** Clear all back handlers (e.g. on home screen) */
+  function clearBack() {
+    _backHandlers = [];
+    twa?.BackButton?.hide();
   }
 
   // ── Haptic Feedback ───────────────────────────────────────────
@@ -182,6 +207,8 @@ const TG = (() => {
     init,
     pushBack,
     popBack,
+    replaceBack,
+    clearBack,
     Haptic,
     getUser,
     getUserId,
