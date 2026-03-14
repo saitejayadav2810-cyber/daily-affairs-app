@@ -35,21 +35,6 @@
       "purpose": "maskable"
     }
   ],
-  "screenshots": [
-    {
-      "src": "screenshot-mobile.png",
-      "sizes": "390x844",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "AGRIMETS home screen with subject picker and mock tests"
-    },
-    {
-      "src": "screenshot-wide.png",
-      "sizes": "1280x800",
-      "type": "image/png",
-      "form_factor": "wide",
-      "label": "AGRIMETS desktop view with subjects and mock tests"
-    }
-  ],
+  "screenshots": [],
   "categories": ["education", "productivity"]
 }
