@@ -3326,6 +3326,100 @@ body {
   border-radius: 0 2px 2px 0;
 }
 
+/* ── Category cards (larger, full-width) ── */
+.mock-cat-card {
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-lg);
+  padding: 18px 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: all 0.10s;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
+  overflow: hidden;
+  animation: fade-up 0.15s ease both;
+}
+
+.mock-cat-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--cat-accent, var(--amber));
+  border-radius: 2px 2px 0 0;
+}
+
+.mock-cat-card:active {
+  transform: scale(0.97);
+  background: rgba(255,171,0,0.06);
+}
+
+.mock-cat-card.grand {
+  --cat-accent: linear-gradient(90deg, var(--cyan), #3d5afe);
+  background: linear-gradient(135deg, rgba(0,229,255,0.06) 0%, rgba(61,90,254,0.06) 100%);
+  border-color: rgba(0,229,255,0.25);
+}
+
+.mock-cat-card.grand::before {
+  background: linear-gradient(90deg, var(--cyan), #3d5afe);
+}
+
+.mock-cat-card.grand:active {
+  background: rgba(0,229,255,0.10);
+}
+
+.mock-cat-icon {
+  font-size: 32px;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-md);
+  background: rgba(255,171,0,0.10);
+  border: 1px solid rgba(255,171,0,0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mock-cat-card.grand .mock-cat-icon {
+  background: rgba(0,229,255,0.10);
+  border-color: rgba(0,229,255,0.25);
+}
+
+.mock-cat-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mock-cat-name {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.mock-cat-card.grand .mock-cat-name { color: var(--cyan); }
+
+.mock-cat-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.mock-cat-arrow {
+  font-size: 18px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
 .mock-test-card:active {
   background: rgba(255,171,0,0.08);
   border-color: rgba(255,171,0,0.40);
