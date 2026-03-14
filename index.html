@@ -126,20 +126,100 @@
           </button>
         </div>
 
-        <!-- ── 50-CARD SPRINT BUTTON ── -->
-        <button class="sprint-cta-btn" id="btn-sprint">
-          <div class="sprint-cta-left">
-            <span class="sprint-cta-icon">⚡</span>
-            <div class="sprint-cta-text">
-              <div class="sprint-cta-title">50-Card Sprint</div>
-              <div class="sprint-cta-sub">10 min · No answers · Just decide</div>
+        <!-- ── MOCK TESTS BUTTON ── -->
+        <div class="mock-banner-container">
+          <button id="btn-open-mock-list" class="mock-cta-btn">
+            <span class="mock-icon">📝</span>
+            <div class="mock-text">
+              <strong>Mock Tests</strong>
+              <span>Practice with full MCQ tests · Negative marking</span>
             </div>
-          </div>
-          <span class="sprint-cta-arrow">→</span>
-        </button>
+            <span class="mock-arrow">→</span>
+          </button>
+        </div>
 
         <div class="subject-grid" id="subject-grid">
           <!-- Populated by JS from sheet categories -->
+        </div>
+      </div>
+
+      <!-- ── MOCK TEST LIST ── -->
+      <div id="mock-list-view" class="hidden">
+        <div class="mock-list-header">
+          <button class="mock-back-btn" id="btn-mock-list-back">← Back</button>
+          <h2 class="mock-list-title">Mock Tests</h2>
+          <span class="mock-list-sub" id="mock-list-sub">Loading…</span>
+        </div>
+        <div class="mock-test-list" id="mock-test-list">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- ── MOCK ARENA ── -->
+      <div id="mock-arena" class="hidden">
+        <div class="mock-header">
+          <button id="btn-mock-exit" class="mock-exit-btn">✕ Quit</button>
+          <span id="mock-progress" class="mock-progress-label">Q 1 / 10</span>
+          <span id="mock-test-label" class="mock-test-name-label">Test 1</span>
+        </div>
+        <div class="mock-question-box">
+          <h3 id="mock-q-text">Loading question…</h3>
+        </div>
+        <div class="mock-options" id="mock-options">
+          <button class="mock-opt" data-opt="a" id="opt-a"></button>
+          <button class="mock-opt" data-opt="b" id="opt-b"></button>
+          <button class="mock-opt" data-opt="c" id="opt-c"></button>
+          <button class="mock-opt" data-opt="d" id="opt-d"></button>
+          <button class="mock-opt" data-opt="e" id="opt-e"></button>
+        </div>
+        <button id="btn-mock-skip" class="mock-skip-btn">⏭ Skip  <span class="mock-skip-note">(No penalty)</span></button>
+      </div>
+
+      <!-- ── MOCK RESULTS ── -->
+      <div id="mock-results" class="hidden">
+        <div class="mock-results-inner">
+          <div class="mock-result-hero">
+            <div class="mock-result-icon">📊</div>
+            <h2 class="mock-result-title">Mock Completed!</h2>
+            <p class="mock-result-testname" id="mock-result-testname"></p>
+          </div>
+          <div class="score-card">
+            <div class="score-block">
+              <span class="score-val" id="mock-final-score">0.00</span>
+              <span class="score-label">Final Score</span>
+            </div>
+            <div class="score-breakdown">
+              <div class="score-row correct-row">
+                <span class="score-dot dot-green"></span>
+                <span class="score-row-label">Correct</span>
+                <span class="score-row-val green" id="count-correct">0</span>
+                <span class="score-row-pts green">+<span id="pts-correct">0.00</span></span>
+              </div>
+              <div class="score-row wrong-row">
+                <span class="score-dot dot-red"></span>
+                <span class="score-row-label">Wrong</span>
+                <span class="score-row-val red" id="count-wrong">0</span>
+                <span class="score-row-pts red">−<span id="pts-wrong">0.00</span></span>
+              </div>
+              <div class="score-row skip-row">
+                <span class="score-dot dot-amber"></span>
+                <span class="score-row-label">Skipped</span>
+                <span class="score-row-val" id="count-skip">0</span>
+                <span class="score-row-pts muted">±0</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="review-filters">
+            <button class="rev-btn active" data-filter="all">All</button>
+            <button class="rev-btn" data-filter="correct">✓ Correct</button>
+            <button class="rev-btn" data-filter="wrong">✕ Wrong</button>
+            <button class="rev-btn" data-filter="skipped">⏭ Skipped</button>
+          </div>
+
+          <div id="mock-review-list" class="mock-review-list"></div>
+
+          <button id="btn-mock-home" class="mock-home-btn">← Back to Test List</button>
         </div>
       </div>
 
