@@ -1,7 +1,7 @@
 {
   "name": "AGRIMETS Swipe Cards",
   "short_name": "AGRIMETS",
-  "description": "Swipe flashcards for agriculture exam preparation",
+  "description": "Swipe flashcards for IBPS AFO, JRF and agriculture competitive exam preparation. Features mock tests, daily targets, progress tracking and more.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
