@@ -975,6 +975,9 @@ function selectSubject(subject) {
   DOM.subjectPicker?.classList.add('hidden');
   DOM.cardArea?.classList.remove('hidden');
 
+  // Back → subject picker
+  TG.pushBack(() => showSubjectPicker());
+
   if (State.cramMode) {
     // ── CRAM MODE: hide swipe UI, show scrolling list ──────────
     DOM.cardArena?.classList.add('hidden');
@@ -1019,6 +1022,9 @@ function showSubjectPicker() {
   });
 
   DOM.subjectPicker?.classList.remove('hidden');
+
+  // Home screen = base level, clear all back handlers
+  TG.clearBack();
 
   // Re-render so counts are fresh
   renderSubjectPicker();
@@ -1204,10 +1210,17 @@ function _initTabs() {
     view?.classList.add('active');
     TG.Haptic.select();
 
-    if (id === 'home')     showSubjectPicker();
-    if (id === 'saved')    renderSavedTab();
-    if (id === 'history')  renderHistoryTab();
-    if (id === 'progress') renderProgressTab();
+    if (id === 'home') {
+      showSubjectPicker(); // clearBack is inside showSubjectPicker
+    } else {
+      // Non-home tab: push back → go back to Cards tab
+      TG.replaceBack(() => {
+        DOM.tabHome?.click();
+      });
+      if (id === 'saved')    renderSavedTab();
+      if (id === 'history')  renderHistoryTab();
+      if (id === 'progress') renderProgressTab();
+    }
   }
 
   tabs.forEach(({ btn, view, id }) => {
@@ -1327,6 +1340,9 @@ function startSprint() {
   DOM.subjectPicker?.classList.add('hidden');
   DOM.sprintResult?.classList.add('hidden');
   DOM.cardArea?.classList.remove('hidden');
+
+  // Back → subject picker
+  TG.pushBack(() => showSubjectPicker());
 
   // ── Swap action rows ──────────────────────────────────────
   DOM.actionRow?.classList.add('hidden');
@@ -1531,7 +1547,8 @@ function startSavedQuiz() {
     DOM.subjectPicker?.classList.add('hidden');
     DOM.cardArea?.classList.remove('hidden');
 
-    _updateDailyProgress();
+    // Back → subject picker
+    TG.pushBack(() => showSubjectPicker());
     _renderCard(State.dailyCards[0]);
     showToast(`🎯 Quizzing ${pool.length} saved card${pool.length !== 1 ? 's' : ''}!`, 2200);
   }, 120);
@@ -2637,6 +2654,11 @@ function _getSundayMegaQuestions() {
 async function _openMockCategories() {
   TG.Haptic.medium();
   _mockShow('mock-category-view');
+  // Back → subject picker
+  TG.pushBack(() => {
+    _mockShow('subject-picker');
+    TG.popBack();
+  });
 
   const catListEl = document.getElementById('mock-category-list');
   const subEl     = document.getElementById('mock-cat-sub');
@@ -3018,9 +3040,49 @@ function _openCategoryTests(cat) {
   TG.Haptic.medium();
   MockData.currentCategory = cat;
 
-  const rows = MockData.allRows.filter(r =>
-    (r.category || 'Uncategorised').trim().toLowerCase() === cat.norm
-  );
+  // ── Only show tests unlocked so far for scheduled categories ──
+  const schedCfg = MOCK_SCHEDULE.find(c => c.catNorm === cat.norm);
+  let allowedTestNos = null; // null = show all (unscheduled category)
+
+  if (schedCfg) {
+    const key    = 'dca_daily_' + cat.norm.replace(/\s+/g,'_');
+    const stored = ls_get(key, { date: '', testNo: null, used: [] });
+    const hour   = new Date().getHours();
+
+    // "used" contains test_nos assigned on previous days (already unlocked)
+    const unlocked = new Set(Array.isArray(stored.used) ? stored.used : []);
+
+    // Also include today's test if unlock hour has passed
+    if (stored.date === today() && stored.testNo && hour >= schedCfg.unlockHour) {
+      unlocked.add(stored.testNo);
+    }
+
+    allowedTestNos = unlocked;
+  }
+
+  const rows = MockData.allRows.filter(r => {
+    if ((r.category || 'Uncategorised').trim().toLowerCase() !== cat.norm) return false;
+    // If scheduled: only include rows whose test_no is unlocked
+    if (allowedTestNos !== null) return allowedTestNos.has(r.test_no || '1');
+    return true;
+  });
+
+  // If no tests unlocked yet, show a friendly message
+  if (schedCfg && rows.length === 0) {
+    const subEl = document.getElementById('mock-list-sub');
+    const titleEl = document.querySelector('#mock-list-view .mock-list-title');
+    if (titleEl) titleEl.textContent = cat.key;
+    if (subEl)   subEl.textContent   = 'No tests unlocked yet — check back after 8 PM';
+    const listEl = document.getElementById('mock-test-list');
+    if (listEl) listEl.innerHTML =
+      `<div class="mock-list-loading" style="color:var(--text-muted)">
+         🔒 Tests for this category unlock daily at the scheduled time.<br><br>
+         Come back after the unlock hour to attempt tests.
+       </div>`;
+    _mockShow('mock-list-view');
+    TG.pushBack(() => { _mockShow('mock-category-view'); TG.popBack(); });
+    return;
+  }
 
   const groups = {};
   rows.forEach(r => {
@@ -3043,6 +3105,8 @@ function _openCategoryTests(cat) {
     `${MockData.testList.length} test${MockData.testList.length !== 1 ? 's' : ''} available`;
 
   _mockShow('mock-list-view');
+  // Back → categories
+  TG.pushBack(() => { _mockShow('mock-category-view'); TG.popBack(); });
   _renderMockTestList();
 }
 
@@ -3083,6 +3147,26 @@ function _startMockTest(test) {
   if (resultName) resultName.textContent = test.name;
 
   _mockShow('mock-arena');
+
+  // Back in arena = quit confirmation
+  const special = ['Grand','Sunday'].includes(test.testNo);
+  TG.pushBack(() => {
+    TG.confirm('Quit this test? Your progress will be lost.', () => {
+      clearInterval(MockData.timerInterval);
+      TG.Haptic.warning();
+      if (special) {
+        _mockShow('mock-category-view');
+        TG.replaceBack(() => { _mockShow('subject-picker'); TG.popBack(); });
+      } else {
+        _mockShow('mock-list-view');
+        TG.replaceBack(() => {
+          _mockShow('mock-category-view');
+          TG.replaceBack(() => { _mockShow('subject-picker'); TG.popBack(); });
+        });
+      }
+    });
+  });
+
   _loadMockQuestion();
 }
 
@@ -3145,6 +3229,23 @@ function _finishMock() {
   document.querySelector('.rev-btn[data-filter="all"]')?.classList.add('active');
 
   _mockShow('mock-results');
+
+  // Back from results
+  const special = ['Grand','Sunday'].includes(MockData.currentTest?.testNo);
+  TG.replaceBack(() => {
+    TG.Haptic.select();
+    if (special) {
+      _mockShow('mock-category-view');
+      TG.replaceBack(() => { _mockShow('subject-picker'); TG.popBack(); });
+    } else {
+      _mockShow('mock-list-view');
+      TG.replaceBack(() => {
+        _mockShow('mock-category-view');
+        TG.replaceBack(() => { _mockShow('subject-picker'); TG.popBack(); });
+      });
+    }
+  });
+
   _renderMockReview('all');
 }
 
@@ -3174,16 +3275,25 @@ function _renderMockReview(filter) {
 
 // ── Wire all mock buttons ─────────────────────────────────────
 function _initMockButtons() {
+  // Main CTA → open category screen
   document.getElementById('btn-open-mock-list')?.addEventListener('click', _openMockCategories);
 
+  // Back: categories → subject picker
   document.getElementById('btn-mock-cat-back')?.addEventListener('click', () => {
-    _mockShow('subject-picker'); TG.Haptic.select();
+    _mockShow('subject-picker');
+    TG.popBack();
   });
 
+  // Back: test list → categories
   document.getElementById('btn-mock-list-back')?.addEventListener('click', () => {
-    _mockShow('mock-category-view'); TG.Haptic.select();
+    _mockShow('mock-category-view');
+    TG.replaceBack(() => {
+      _mockShow('subject-picker');
+      TG.popBack();
+    });
   });
 
+  // Skip
   document.getElementById('btn-mock-skip')?.addEventListener('click', () => {
     const q = MockData.questions[MockData.currentIndex];
     if (!q) return;
@@ -3193,21 +3303,42 @@ function _initMockButtons() {
     _loadMockQuestion();
   });
 
+  // Quit arena
   document.getElementById('btn-mock-exit')?.addEventListener('click', () => {
     TG.confirm('Quit this test? Your progress will be lost.', () => {
       clearInterval(MockData.timerInterval);
       TG.Haptic.warning();
       const special = ['Grand','Sunday'].includes(MockData.currentTest?.testNo);
-      special ? _mockShow('mock-category-view') : _mockShow('mock-list-view');
+      if (special) {
+        _mockShow('mock-category-view');
+        TG.replaceBack(() => { _mockShow('subject-picker'); TG.popBack(); });
+      } else {
+        _mockShow('mock-list-view');
+        TG.replaceBack(() => {
+          _mockShow('mock-category-view');
+          TG.replaceBack(() => { _mockShow('subject-picker'); TG.popBack(); });
+        });
+      }
     });
   });
 
+  // Results back
   document.getElementById('btn-mock-home')?.addEventListener('click', () => {
     TG.Haptic.select();
     const special = ['Grand','Sunday'].includes(MockData.currentTest?.testNo);
-    special ? _mockShow('mock-category-view') : _mockShow('mock-list-view');
+    if (special) {
+      _mockShow('mock-category-view');
+      TG.replaceBack(() => { _mockShow('subject-picker'); TG.popBack(); });
+    } else {
+      _mockShow('mock-list-view');
+      TG.replaceBack(() => {
+        _mockShow('mock-category-view');
+        TG.replaceBack(() => { _mockShow('subject-picker'); TG.popBack(); });
+      });
+    }
   });
 
+  // Review filters
   document.querySelectorAll('.rev-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.rev-btn').forEach(b => b.classList.remove('active'));
