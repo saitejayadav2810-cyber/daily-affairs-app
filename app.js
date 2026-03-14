@@ -1014,7 +1014,7 @@ function showSubjectPicker() {
   DOM.cardArea?.classList.add('hidden');
 
   // ── Hide all mock views so they never bleed through ──────────
-  ['mock-list-view', 'mock-arena', 'mock-results'].forEach(id => {
+  ['mock-category-view', 'mock-list-view', 'mock-arena', 'mock-results'].forEach(id => {
     document.getElementById(id)?.classList.add('hidden');
   });
 
@@ -2489,89 +2489,200 @@ function _initGlossarySheet() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  SUNDAY MOCK ENGINE
+//  MOCK TEST ENGINE  — 3-level navigation
+//
+//  SHEET TAB: "MockTests"
+//  COLUMNS:   id | category | test_no | question |
+//             opt_a | opt_b | opt_c | opt_d | opt_e | answer
+//
+//  NAVIGATION FLOW:
+//  Mock Tests button
+//    → Category screen  (groups by "category" column)
+//      → Test list      (groups by "test_no" within category)
+//        → Arena        (runs the test)
+//          → Results
+//
+//  SPECIAL CATEGORY: "Grand Test" — 100 random Qs from ALL rows
 // ════════════════════════════════════════════════════════════════
 
-// ════════════════════════════════════════════════════════════════
-//  MOCK TEST ENGINE  — multi-test, always available, option A-E
-//  Sheet tab: "MockTests"
-//  Columns:   id | test_no | question | opt_a | opt_b | opt_c |
-//             opt_d | opt_e | answer
-//  Each unique value of test_no becomes one test in the list.
-// ════════════════════════════════════════════════════════════════
+// Category definitions — add new ones here freely.
+// icon: emoji  |  key: exact value in the "category" column of your sheet
+// (Grand Test is special — it picks 100 random Qs from ALL rows)
+const MOCK_CATEGORIES = [
+  {
+    key:         '__grand__',
+    name:        'Grand Test',
+    icon:        '🏆',
+    desc:        '100 random questions from all categories',
+    grand:       true,
+    grandCount:  100,
+  },
+  {
+    key:  'Test Series',
+    name: 'Test Series',
+    icon: '📋',
+    desc: 'Full-length practice tests',
+  },
+  {
+    key:  'NIMRAJ Sunday',
+    name: 'NIMRAJ Sunday Test',
+    icon: '☀️',
+    desc: 'NIMRAJ Sunday special tests',
+  },
+  // ── Add more categories below ─────────────────────────────
+  // { key: 'Agronomy Special', name: 'Agronomy Special', icon: '🌾', desc: '...' },
+];
 
 let MockData = {
-  allRows:      [],   // Full fetched array from MockTests tab (cached)
-  testList:     [],   // [{ testNo, name, questions[] }, …]
-  currentTest:  null, // The test object currently being run
-  questions:    [],   // Questions for the active test
-  currentIndex: 0,
-  history:      [],   // { question, selected, correct, status }
+  allRows:         [],   // All rows fetched from MockTests tab (cached)
+  currentCategory: null, // Category object currently browsed
+  testList:        [],   // Tests within the current category
+  currentTest:     null, // Test currently running
+  questions:       [],   // Questions for the active test
+  currentIndex:    0,
+  history:         [],   // { question, selected, correct, status }
+  timerInterval:   null,
 };
 
-// ── Helper: show / hide mock views ──────────────────────────
+// ── Show/hide mock screens ───────────────────────────────────
 function _mockShow(id) {
-  ['subject-picker','mock-list-view','mock-arena','mock-results'].forEach(v => {
+  ['subject-picker','mock-category-view','mock-list-view',
+   'mock-arena','mock-results'].forEach(v => {
     const el = document.getElementById(v);
     if (el) el.classList.toggle('hidden', v !== id);
   });
 }
 
-// ── Open mock list: fetch once, then render ──────────────────
-async function _openMockList() {
+// ── STEP 1: Open category screen ────────────────────────────
+async function _openMockCategories() {
   TG.Haptic.medium();
-  _mockShow('mock-list-view');
+  _mockShow('mock-category-view');
 
-  const listEl = document.getElementById('mock-test-list');
-  const subEl  = document.getElementById('mock-list-sub');
-  if (listEl) listEl.innerHTML = '<div class="mock-list-loading">⏳ Loading tests…</div>';
+  const catListEl = document.getElementById('mock-category-list');
+  const subEl     = document.getElementById('mock-cat-sub');
+  if (catListEl) catListEl.innerHTML = '<div class="mock-list-loading">⏳ Loading…</div>';
 
-  // Use cached rows if already fetched
+  // Fetch all rows once and cache
   if (MockData.allRows.length === 0) {
     try {
-      if (DOM.loaderText) DOM.loaderText.textContent = 'Loading Mock Tests…';
       const url = `https://opensheet.elk.sh/${CONFIG.SPREADSHEET_ID}/MockTests`;
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const raw = await res.json();
-      if (!Array.isArray(raw) || raw.length === 0) throw new Error('Empty sheet');
+      if (!Array.isArray(raw) || raw.length === 0) throw new Error('Empty');
 
-      // Normalise keys
       MockData.allRows = raw.map(r => {
         const n = {};
-        Object.keys(r).forEach(k => { n[k.toLowerCase().trim()] = String(r[k] ?? '').trim(); });
+        Object.keys(r).forEach(k => {
+          n[k.toLowerCase().trim()] = String(r[k] ?? '').trim();
+        });
         return n;
       });
     } catch (err) {
       console.error('[Mock]', err);
-      if (listEl) listEl.innerHTML =
-        `<div class="mock-list-loading" style="color:var(--red)">❌ Could not load tests.<br><small>Check sheet tab is named exactly <strong>MockTests</strong> and is shared publicly.</small></div>`;
-      if (subEl) subEl.textContent = 'Failed to load';
+      if (catListEl) catListEl.innerHTML =
+        `<div class="mock-list-loading" style="color:var(--red)">
+           ❌ Could not load tests.<br>
+           <small>Make sure your sheet tab is named exactly <strong>MockTests</strong>
+           and is shared as "Anyone with link – Viewer".</small>
+         </div>`;
       return;
     }
   }
 
-  // Group by test_no — preserve insertion order (Test 1, 2, 3…)
+  // Count questions per category key for the desc
+  const countByKey = {};
+  MockData.allRows.forEach(r => {
+    const cat = r.category || 'Test Series';
+    countByKey[cat] = (countByKey[cat] || 0) + 1;
+  });
+
+  if (subEl) subEl.textContent = 'Choose a category to begin';
+  _renderMockCategories(countByKey);
+}
+
+function _renderMockCategories(countByKey) {
+  const listEl = document.getElementById('mock-category-list');
+  if (!listEl) return;
+  listEl.innerHTML = '';
+
+  MOCK_CATEGORIES.forEach((cat, i) => {
+    // Skip non-grand categories that have 0 questions in the sheet
+    if (!cat.grand && !countByKey[cat.key]) return;
+
+    const totalQ = cat.grand
+      ? MockData.allRows.length
+      : (countByKey[cat.key] || 0);
+
+    const card = document.createElement('div');
+    card.className = 'mock-cat-card' + (cat.grand ? ' grand' : '');
+    card.style.animationDelay = (i * 0.05) + 's';
+    card.innerHTML = `
+      <div class="mock-cat-icon">${cat.icon}</div>
+      <div class="mock-cat-info">
+        <div class="mock-cat-name">${_escHtml(cat.name)}</div>
+        <div class="mock-cat-meta">${_escHtml(cat.desc)} · ${totalQ} questions</div>
+      </div>
+      <span class="mock-cat-arrow">›</span>
+    `;
+    card.addEventListener('click', () => {
+      if (cat.grand) {
+        _startGrandTest(cat.grandCount);
+      } else {
+        _openCategoryTests(cat);
+      }
+    });
+    listEl.appendChild(card);
+  });
+}
+
+// ── STEP 2a: Grand Test — 100 random Qs from all rows ───────
+function _startGrandTest(count) {
+  TG.Haptic.medium();
+  const pool = shuffle([...MockData.allRows]).slice(0, count);
+  const test = {
+    testNo: 'Grand',
+    name:   `Grand Test (${pool.length} Qs)`,
+    questions: pool,
+  };
+  _startMockTest(test);
+}
+
+// ── STEP 2b: Open test list for a category ──────────────────
+function _openCategoryTests(cat) {
+  TG.Haptic.medium();
+  MockData.currentCategory = cat;
+
+  const rows = MockData.allRows.filter(r =>
+    (r.category || 'Test Series') === cat.key
+  );
+
+  // Group by test_no within this category
   const groups = {};
-  MockData.allRows.forEach(row => {
-    const t = row.test_no || '1';
+  rows.forEach(r => {
+    const t = r.test_no || '1';
     if (!groups[t]) groups[t] = [];
-    groups[t].push(row);
+    groups[t].push(r);
   });
 
   MockData.testList = Object.entries(groups)
     .sort(([a], [b]) => {
-      // Sort numerically if possible, otherwise alphabetically
       const na = parseFloat(a), nb = parseFloat(b);
       return !isNaN(na) && !isNaN(nb) ? na - nb : a.localeCompare(b);
     })
     .map(([testNo, questions]) => ({
       testNo,
-      name: `Test ${testNo}`,
+      name: `${cat.name} — Test ${testNo}`,
       questions,
     }));
 
-  if (subEl) subEl.textContent = `${MockData.testList.length} test${MockData.testList.length !== 1 ? 's' : ''} available`;
+  // Update list header
+  const titleEl = document.querySelector('#mock-list-view .mock-list-title');
+  const subEl   = document.getElementById('mock-list-sub');
+  if (titleEl) titleEl.textContent = cat.name;
+  if (subEl)   subEl.textContent   = `${MockData.testList.length} test${MockData.testList.length !== 1 ? 's' : ''} available`;
+
+  _mockShow('mock-list-view');
   _renderMockTestList();
 }
 
@@ -2583,6 +2694,7 @@ function _renderMockTestList() {
   MockData.testList.forEach((test, i) => {
     const card = document.createElement('div');
     card.className = 'mock-test-card';
+    card.style.animationDelay = (i * 0.04) + 's';
     card.innerHTML = `
       <div class="mock-test-num">${test.testNo}</div>
       <div class="mock-test-info">
@@ -2591,31 +2703,29 @@ function _renderMockTestList() {
       </div>
       <span class="mock-test-arrow">›</span>
     `;
-    card.style.animationDelay = (i * 0.04) + 's';
     card.addEventListener('click', () => _startMockTest(test));
     listEl.appendChild(card);
   });
 }
 
-// ── Start a specific test ────────────────────────────────────
+// ── STEP 3: Start a specific test ───────────────────────────
 function _startMockTest(test) {
   TG.Haptic.medium();
   MockData.currentTest  = test;
-  MockData.questions    = [...test.questions]; // keep original order (no shuffle — exam order)
+  MockData.questions    = [...test.questions];
   MockData.currentIndex = 0;
   MockData.history      = [];
 
-  // Update arena labels
-  const testLabel = document.getElementById('mock-test-label');
-  if (testLabel) testLabel.textContent = test.name;
+  const testLabel  = document.getElementById('mock-test-label');
   const resultName = document.getElementById('mock-result-testname');
+  if (testLabel)  testLabel.textContent  = test.name;
   if (resultName) resultName.textContent = test.name;
 
   _mockShow('mock-arena');
   _loadMockQuestion();
 }
 
-// ── Load question into arena ─────────────────────────────────
+// ── Load one question into the arena ────────────────────────
 function _loadMockQuestion() {
   const q = MockData.questions[MockData.currentIndex];
   if (!q) { _finishMock(); return; }
@@ -2628,11 +2738,11 @@ function _loadMockQuestion() {
     const btn = document.getElementById('opt-' + o);
     if (!btn) return;
     const text = q['opt_' + o] || '';
-    btn.textContent = text;
-    btn.className   = 'mock-opt';
-    btn.disabled    = false;
-    btn.style.display = text ? '' : 'none'; // hide E if empty
-    btn.onclick = text ? () => _handleMockAnswer(text, q.answer, q) : null;
+    btn.textContent      = text;
+    btn.className        = 'mock-opt';
+    btn.disabled         = false;
+    btn.style.display    = text ? '' : 'none';
+    btn.onclick          = text ? () => _handleMockAnswer(text, q.answer, q) : null;
   });
 }
 
@@ -2643,11 +2753,8 @@ function _handleMockAnswer(selectedText, correctText, qObj) {
 
   document.querySelectorAll('.mock-opt').forEach(btn => {
     btn.disabled = true;
-    if (btn.textContent.trim() === correctText.trim()) {
-      btn.classList.add('correct');
-    } else if (btn.textContent.trim() === selectedText.trim() && !isCorrect) {
-      btn.classList.add('wrong');
-    }
+    if (btn.textContent.trim() === correctText.trim()) btn.classList.add('correct');
+    else if (btn.textContent.trim() === selectedText.trim() && !isCorrect) btn.classList.add('wrong');
   });
 
   MockData.history.push({
@@ -2660,7 +2767,7 @@ function _handleMockAnswer(selectedText, correctText, qObj) {
   setTimeout(() => { MockData.currentIndex++; _loadMockQuestion(); }, 550);
 }
 
-// ── Finish: calculate score, show results ────────────────────
+// ── Score & results ──────────────────────────────────────────
 function _finishMock() {
   TG.Haptic.success();
   let c = 0, w = 0, s = 0;
@@ -2670,8 +2777,8 @@ function _finishMock() {
     else                              s++;
   });
 
-  const finalScore = (c * 1) - (w * 0.25);
-  document.getElementById('mock-final-score').textContent = finalScore.toFixed(2);
+  const score = (c * 1) - (w * 0.25);
+  document.getElementById('mock-final-score').textContent = score.toFixed(2);
   document.getElementById('count-correct').textContent    = c;
   document.getElementById('count-wrong').textContent      = w;
   document.getElementById('count-skip').textContent       = s;
@@ -2689,6 +2796,7 @@ function _renderMockReview(filter) {
   const list = document.getElementById('mock-review-list');
   if (!list) return;
   list.innerHTML = '';
+
   const data = filter === 'all'
     ? MockData.history
     : MockData.history.filter(h => h.status === filter);
@@ -2711,16 +2819,22 @@ function _renderMockReview(filter) {
 
 // ── Wire all mock buttons ────────────────────────────────────
 function _initMockButtons() {
-  // Main CTA → open list
-  document.getElementById('btn-open-mock-list')?.addEventListener('click', _openMockList);
+  // Main CTA → categories
+  document.getElementById('btn-open-mock-list')?.addEventListener('click', _openMockCategories);
 
-  // Back from list → subject picker
-  document.getElementById('btn-mock-list-back')?.addEventListener('click', () => {
+  // Back: categories → subject picker
+  document.getElementById('btn-mock-cat-back')?.addEventListener('click', () => {
     _mockShow('subject-picker');
     TG.Haptic.select();
   });
 
-  // Skip button
+  // Back: test list → categories
+  document.getElementById('btn-mock-list-back')?.addEventListener('click', () => {
+    _mockShow('mock-category-view');
+    TG.Haptic.select();
+  });
+
+  // Skip
   document.getElementById('btn-mock-skip')?.addEventListener('click', () => {
     const q = MockData.questions[MockData.currentIndex];
     if (!q) return;
@@ -2730,18 +2844,28 @@ function _initMockButtons() {
     _loadMockQuestion();
   });
 
-  // Quit arena → back to list
+  // Quit arena → back to test list (or categories for grand test)
   document.getElementById('btn-mock-exit')?.addEventListener('click', () => {
-    TG.confirm('Quit this test? Progress will be lost.', () => {
-      _mockShow('mock-list-view');
+    TG.confirm('Quit this test? Your progress will be lost.', () => {
+      clearInterval(MockData.timerInterval);
       TG.Haptic.warning();
+      // Grand test has no category to go back to
+      if (MockData.currentTest?.testNo === 'Grand') {
+        _mockShow('mock-category-view');
+      } else {
+        _mockShow('mock-list-view');
+      }
     });
   });
 
-  // Results → back to list
+  // Results back → test list (or categories for grand test)
   document.getElementById('btn-mock-home')?.addEventListener('click', () => {
-    _mockShow('mock-list-view');
     TG.Haptic.select();
+    if (MockData.currentTest?.testNo === 'Grand') {
+      _mockShow('mock-category-view');
+    } else {
+      _mockShow('mock-list-view');
+    }
   });
 
   // Review filters
