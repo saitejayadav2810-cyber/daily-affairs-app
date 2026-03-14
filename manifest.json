@@ -4,13 +4,14 @@
   "description": "Swipe flashcards for IBPS AFO, JRF and agriculture competitive exam preparation. Features mock tests, daily targets, progress tracking and more.",
   "start_url": "/",
   "scope": "/",
+  "id": "/",
   "display": "standalone",
   "background_color": "#0a0a12",
   "theme_color": "#0a0a12",
   "orientation": "portrait-primary",
   "lang": "en",
   "dir": "ltr",
-  "id": "/",
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "icon-192.png",
@@ -31,7 +32,14 @@
       "purpose": "maskable"
     }
   ],
-  "screenshots": [],
-  "categories": ["education", "productivity"],
-  "prefer_related_applications": false
+  "screenshots": [
+    {
+      "src": "screenshot-mobile.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "AGRIMETS home screen with subject picker and mock tests"
+    }
+  ],
+  "categories": ["education", "productivity"]
 }
