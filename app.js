@@ -2460,6 +2460,273 @@ function _initGlossarySheet() {
   }, { passive: true });
 }
 
+// ════════════════════════════════════════════════════════════════
+//  SUNDAY MOCK ENGINE
+// ════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════
+//  MOCK TEST ENGINE  — multi-test, always available, option A-E
+//  Sheet tab: "MockTests"
+//  Columns:   id | test_no | question | opt_a | opt_b | opt_c |
+//             opt_d | opt_e | answer
+//  Each unique value of test_no becomes one test in the list.
+// ════════════════════════════════════════════════════════════════
+
+let MockData = {
+  allRows:      [],   // Full fetched array from MockTests tab (cached)
+  testList:     [],   // [{ testNo, name, questions[] }, …]
+  currentTest:  null, // The test object currently being run
+  questions:    [],   // Questions for the active test
+  currentIndex: 0,
+  history:      [],   // { question, selected, correct, status }
+};
+
+// ── Helper: show / hide mock views ──────────────────────────
+function _mockShow(id) {
+  ['subject-picker','mock-list-view','mock-arena','mock-results'].forEach(v => {
+    const el = document.getElementById(v);
+    if (el) el.classList.toggle('hidden', v !== id);
+  });
+}
+
+// ── Open mock list: fetch once, then render ──────────────────
+async function _openMockList() {
+  TG.Haptic.medium();
+  _mockShow('mock-list-view');
+
+  const listEl = document.getElementById('mock-test-list');
+  const subEl  = document.getElementById('mock-list-sub');
+  if (listEl) listEl.innerHTML = '<div class="mock-list-loading">⏳ Loading tests…</div>';
+
+  // Use cached rows if already fetched
+  if (MockData.allRows.length === 0) {
+    try {
+      if (DOM.loaderText) DOM.loaderText.textContent = 'Loading Mock Tests…';
+      const url = `https://opensheet.elk.sh/${CONFIG.SPREADSHEET_ID}/MockTests`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const raw = await res.json();
+      if (!Array.isArray(raw) || raw.length === 0) throw new Error('Empty sheet');
+
+      // Normalise keys
+      MockData.allRows = raw.map(r => {
+        const n = {};
+        Object.keys(r).forEach(k => { n[k.toLowerCase().trim()] = String(r[k] ?? '').trim(); });
+        return n;
+      });
+    } catch (err) {
+      console.error('[Mock]', err);
+      if (listEl) listEl.innerHTML =
+        `<div class="mock-list-loading" style="color:var(--red)">❌ Could not load tests.<br><small>Check sheet tab is named exactly <strong>MockTests</strong> and is shared publicly.</small></div>`;
+      if (subEl) subEl.textContent = 'Failed to load';
+      return;
+    }
+  }
+
+  // Group by test_no — preserve insertion order (Test 1, 2, 3…)
+  const groups = {};
+  MockData.allRows.forEach(row => {
+    const t = row.test_no || '1';
+    if (!groups[t]) groups[t] = [];
+    groups[t].push(row);
+  });
+
+  MockData.testList = Object.entries(groups)
+    .sort(([a], [b]) => {
+      // Sort numerically if possible, otherwise alphabetically
+      const na = parseFloat(a), nb = parseFloat(b);
+      return !isNaN(na) && !isNaN(nb) ? na - nb : a.localeCompare(b);
+    })
+    .map(([testNo, questions]) => ({
+      testNo,
+      name: `Test ${testNo}`,
+      questions,
+    }));
+
+  if (subEl) subEl.textContent = `${MockData.testList.length} test${MockData.testList.length !== 1 ? 's' : ''} available`;
+  _renderMockTestList();
+}
+
+function _renderMockTestList() {
+  const listEl = document.getElementById('mock-test-list');
+  if (!listEl) return;
+  listEl.innerHTML = '';
+
+  MockData.testList.forEach((test, i) => {
+    const card = document.createElement('div');
+    card.className = 'mock-test-card';
+    card.innerHTML = `
+      <div class="mock-test-num">${test.testNo}</div>
+      <div class="mock-test-info">
+        <div class="mock-test-name">${_escHtml(test.name)}</div>
+        <div class="mock-test-meta">${test.questions.length} questions · −0.25 negative marking</div>
+      </div>
+      <span class="mock-test-arrow">›</span>
+    `;
+    card.style.animationDelay = (i * 0.04) + 's';
+    card.addEventListener('click', () => _startMockTest(test));
+    listEl.appendChild(card);
+  });
+}
+
+// ── Start a specific test ────────────────────────────────────
+function _startMockTest(test) {
+  TG.Haptic.medium();
+  MockData.currentTest  = test;
+  MockData.questions    = [...test.questions]; // keep original order (no shuffle — exam order)
+  MockData.currentIndex = 0;
+  MockData.history      = [];
+
+  // Update arena labels
+  const testLabel = document.getElementById('mock-test-label');
+  if (testLabel) testLabel.textContent = test.name;
+  const resultName = document.getElementById('mock-result-testname');
+  if (resultName) resultName.textContent = test.name;
+
+  _mockShow('mock-arena');
+  _loadMockQuestion();
+}
+
+// ── Load question into arena ─────────────────────────────────
+function _loadMockQuestion() {
+  const q = MockData.questions[MockData.currentIndex];
+  if (!q) { _finishMock(); return; }
+
+  document.getElementById('mock-progress').textContent =
+    `Q ${MockData.currentIndex + 1} / ${MockData.questions.length}`;
+  document.getElementById('mock-q-text').textContent = q.question || '';
+
+  ['a','b','c','d','e'].forEach(o => {
+    const btn = document.getElementById('opt-' + o);
+    if (!btn) return;
+    const text = q['opt_' + o] || '';
+    btn.textContent = text;
+    btn.className   = 'mock-opt';
+    btn.disabled    = false;
+    btn.style.display = text ? '' : 'none'; // hide E if empty
+    btn.onclick = text ? () => _handleMockAnswer(text, q.answer, q) : null;
+  });
+}
+
+// ── Handle answer tap ────────────────────────────────────────
+function _handleMockAnswer(selectedText, correctText, qObj) {
+  TG.Haptic.light();
+  const isCorrect = selectedText.trim() === correctText.trim();
+
+  document.querySelectorAll('.mock-opt').forEach(btn => {
+    btn.disabled = true;
+    if (btn.textContent.trim() === correctText.trim()) {
+      btn.classList.add('correct');
+    } else if (btn.textContent.trim() === selectedText.trim() && !isCorrect) {
+      btn.classList.add('wrong');
+    }
+  });
+
+  MockData.history.push({
+    question: qObj.question,
+    selected: selectedText,
+    correct:  correctText,
+    status:   isCorrect ? 'correct' : 'wrong',
+  });
+
+  setTimeout(() => { MockData.currentIndex++; _loadMockQuestion(); }, 550);
+}
+
+// ── Finish: calculate score, show results ────────────────────
+function _finishMock() {
+  TG.Haptic.success();
+  let c = 0, w = 0, s = 0;
+  MockData.history.forEach(h => {
+    if      (h.status === 'correct') c++;
+    else if (h.status === 'wrong')   w++;
+    else                              s++;
+  });
+
+  const finalScore = (c * 1) - (w * 0.25);
+  document.getElementById('mock-final-score').textContent = finalScore.toFixed(2);
+  document.getElementById('count-correct').textContent    = c;
+  document.getElementById('count-wrong').textContent      = w;
+  document.getElementById('count-skip').textContent       = s;
+  document.getElementById('pts-correct').textContent      = c.toFixed(2);
+  document.getElementById('pts-wrong').textContent        = (w * 0.25).toFixed(2);
+
+  document.querySelectorAll('.rev-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('.rev-btn[data-filter="all"]')?.classList.add('active');
+
+  _mockShow('mock-results');
+  _renderMockReview('all');
+}
+
+function _renderMockReview(filter) {
+  const list = document.getElementById('mock-review-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const data = filter === 'all'
+    ? MockData.history
+    : MockData.history.filter(h => h.status === filter);
+
+  if (!data.length) {
+    list.innerHTML = `<p style="text-align:center;color:var(--text-muted);padding:20px;font-size:13px;">No items here</p>`;
+    return;
+  }
+  data.forEach(h => {
+    const div = document.createElement('div');
+    div.className = `review-item ${h.status}`;
+    div.innerHTML = `
+      <div class="rev-q">${_escHtml(h.question)}</div>
+      <div class="rev-ans">✓ ${_escHtml(h.correct)}</div>
+      ${h.status === 'wrong' ? `<div class="rev-user">✗ You chose: ${_escHtml(h.selected)}</div>` : ''}
+    `;
+    list.appendChild(div);
+  });
+}
+
+// ── Wire all mock buttons ────────────────────────────────────
+function _initMockButtons() {
+  // Main CTA → open list
+  document.getElementById('btn-open-mock-list')?.addEventListener('click', _openMockList);
+
+  // Back from list → subject picker
+  document.getElementById('btn-mock-list-back')?.addEventListener('click', () => {
+    _mockShow('subject-picker');
+    TG.Haptic.select();
+  });
+
+  // Skip button
+  document.getElementById('btn-mock-skip')?.addEventListener('click', () => {
+    const q = MockData.questions[MockData.currentIndex];
+    if (!q) return;
+    MockData.history.push({ question: q.question, selected: 'Skipped', correct: q.answer, status: 'skipped' });
+    TG.Haptic.light();
+    MockData.currentIndex++;
+    _loadMockQuestion();
+  });
+
+  // Quit arena → back to list
+  document.getElementById('btn-mock-exit')?.addEventListener('click', () => {
+    TG.confirm('Quit this test? Progress will be lost.', () => {
+      _mockShow('mock-list-view');
+      TG.Haptic.warning();
+    });
+  });
+
+  // Results → back to list
+  document.getElementById('btn-mock-home')?.addEventListener('click', () => {
+    _mockShow('mock-list-view');
+    TG.Haptic.select();
+  });
+
+  // Review filters
+  document.querySelectorAll('.rev-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.rev-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _renderMockReview(btn.dataset.filter);
+      TG.Haptic.select();
+    });
+  });
+}
+
 async function boot() {
   // 1. Cache DOM
   _cacheDom();
@@ -2491,6 +2758,7 @@ async function boot() {
   _initModeToggle();
   _initGlossarySheet();
   _initDailyTarget();
+  _initMockButtons();
 
   // 7. Dismiss splash
   await _delay(300);
