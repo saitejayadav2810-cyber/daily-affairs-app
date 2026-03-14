@@ -3040,50 +3040,86 @@ function _openCategoryTests(cat) {
   TG.Haptic.medium();
   MockData.currentCategory = cat;
 
-  // ── Only show tests unlocked so far for scheduled categories ──
-  const schedCfg = MOCK_SCHEDULE.find(c => c.catNorm === cat.norm);
-  let allowedTestNos = null; // null = show all (unscheduled category)
+  const schedCfg  = MOCK_SCHEDULE.find(c => c.catNorm === cat.norm);
+  const todayStr  = today();
+  const hour      = new Date().getHours();
+
+  // ── Build the set of test_nos that belong to PAST DAYS only ──
+  // Rule: today's assigned test is NOT shown in the category list —
+  // it lives on the Mock Tests home screen (countdown / LIVE card).
+  // Only after midnight does it move into the category list.
+  let allowedTestNos = null; // null = unscheduled, show everything
 
   if (schedCfg) {
     const key    = 'dca_daily_' + cat.norm.replace(/\s+/g,'_');
     const stored = ls_get(key, { date: '', testNo: null, used: [] });
-    const hour   = new Date().getHours();
+    const usedArr = Array.isArray(stored.used) ? stored.used : [];
 
-    // "used" contains test_nos assigned on previous days (already unlocked)
-    const unlocked = new Set(Array.isArray(stored.used) ? stored.used : []);
-
-    // Also include today's test if unlock hour has passed
-    if (stored.date === today() && stored.testNo && hour >= schedCfg.unlockHour) {
-      unlocked.add(stored.testNo);
+    let pastTests;
+    if (stored.date === todayStr && stored.testNo) {
+      // stored.used already contains today's testNo — exclude it
+      pastTests = usedArr.filter(t => t !== stored.testNo);
+    } else {
+      // Today's test not yet assigned — everything in used[] is from past days
+      pastTests = usedArr;
     }
-
-    allowedTestNos = unlocked;
+    allowedTestNos = new Set(pastTests);
   }
 
+  // ── Filter rows ──────────────────────────────────────────────
   const rows = MockData.allRows.filter(r => {
     if ((r.category || 'Uncategorised').trim().toLowerCase() !== cat.norm) return false;
-    // If scheduled: only include rows whose test_no is unlocked
     if (allowedTestNos !== null) return allowedTestNos.has(r.test_no || '1');
     return true;
   });
 
-  // If no tests unlocked yet, show a friendly message
+  const titleEl = document.querySelector('#mock-list-view .mock-list-title');
+  const subEl   = document.getElementById('mock-list-sub');
+  const listEl  = document.getElementById('mock-test-list');
+  if (titleEl) titleEl.textContent = cat.key;
+
+  // ── Empty state for scheduled category ───────────────────────
   if (schedCfg && rows.length === 0) {
-    const subEl = document.getElementById('mock-list-sub');
-    const titleEl = document.querySelector('#mock-list-view .mock-list-title');
-    if (titleEl) titleEl.textContent = cat.key;
-    if (subEl)   subEl.textContent   = 'No tests unlocked yet — check back after 8 PM';
-    const listEl = document.getElementById('mock-test-list');
-    if (listEl) listEl.innerHTML =
-      `<div class="mock-list-loading" style="color:var(--text-muted)">
-         🔒 Tests for this category unlock daily at the scheduled time.<br><br>
-         Come back after the unlock hour to attempt tests.
-       </div>`;
     _mockShow('mock-list-view');
     TG.pushBack(() => { _mockShow('mock-category-view'); TG.popBack(); });
+
+    // Work out WHY it's empty and show the right message
+    const todayTestNo = _getDailyTestNoReadOnly(cat.norm);
+    const hasTodayTest = todayTestNo !== null &&
+      MockData.allRows.some(r =>
+        (r.category || '').trim().toLowerCase() === cat.norm &&
+        (r.test_no || '1') === todayTestNo
+      );
+
+    let msg, subMsg;
+    if (hasTodayTest) {
+      const unlockH  = schedCfg.unlockHour;
+      const timeStr  = unlockH === 20 ? '8 PM' : unlockH === 21 ? '9 PM' :
+                       unlockH === 22 ? '10 PM' : `${unlockH}:00`;
+      const isLive   = hour >= unlockH;
+      if (isLive) {
+        msg    = `Today's test is LIVE on the Mock Tests screen!`;
+        subMsg = `It will appear here from tomorrow onwards.`;
+      } else {
+        msg    = `Today's test unlocks at ${timeStr}.`;
+        subMsg = `It will appear here from tomorrow. Check the Mock Tests home for the countdown.`;
+      }
+    } else {
+      msg    = `Will be added soon!`;
+      subMsg = `No test is scheduled for today. Check back tomorrow.`;
+    }
+
+    if (subEl)  subEl.textContent = hasTodayTest ? 'Unlocks today' : 'Coming soon';
+    if (listEl) listEl.innerHTML = `
+      <div class="mock-empty-state">
+        <div class="mock-empty-icon">${hasTodayTest ? '⏳' : '📋'}</div>
+        <div class="mock-empty-title">${_escHtml(msg)}</div>
+        <div class="mock-empty-sub">${_escHtml(subMsg)}</div>
+      </div>`;
     return;
   }
 
+  // ── Build test list from allowed rows ────────────────────────
   const groups = {};
   rows.forEach(r => {
     const t = r.test_no || '1';
@@ -3096,18 +3132,30 @@ function _openCategoryTests(cat) {
       const na = parseFloat(a), nb = parseFloat(b);
       return !isNaN(na) && !isNaN(nb) ? na - nb : a.localeCompare(b);
     })
-    .map(([testNo, questions]) => ({ testNo, name: `${cat.key} — Test ${testNo}`, questions }));
+    .map(([testNo, questions]) => ({
+      testNo,
+      name: `${cat.key} — Test ${testNo}`,
+      questions,
+    }));
 
-  const titleEl = document.querySelector('#mock-list-view .mock-list-title');
-  const subEl   = document.getElementById('mock-list-sub');
-  if (titleEl) titleEl.textContent = cat.key;
-  if (subEl)   subEl.textContent   =
+  if (subEl) subEl.textContent =
     `${MockData.testList.length} test${MockData.testList.length !== 1 ? 's' : ''} available`;
 
   _mockShow('mock-list-view');
-  // Back → categories
   TG.pushBack(() => { _mockShow('mock-category-view'); TG.popBack(); });
   _renderMockTestList();
+}
+
+/**
+ * Read-only version of _getDailyTestNo — checks what test is
+ * assigned today WITHOUT advancing the counter or writing to storage.
+ * Used only to inspect the current state for UI messages.
+ */
+function _getDailyTestNoReadOnly(catNorm) {
+  const key     = 'dca_daily_' + catNorm.replace(/\s+/g,'_');
+  const stored  = ls_get(key, { date: '', testNo: null, used: [] });
+  if (stored.date === today() && stored.testNo) return stored.testNo;
+  return null; // not yet assigned today (or already assigned but different date)
 }
 
 function _renderMockTestList() {
