@@ -1192,21 +1192,43 @@ function _initTabs() {
     { btn: DOM.tabProgress, view: DOM.viewProgress, id: 'progress' },
   ];
 
+  // ── Helper: actually perform the tab switch ──────────────────
+  function _switchTab(btn, view, id) {
+    tabs.forEach(t => {
+      t.btn?.classList.remove('active');
+      t.view?.classList.remove('active');
+    });
+    btn.classList.add('active');
+    view?.classList.add('active');
+    TG.Haptic.select();
+
+    if (id === 'home')     showSubjectPicker();
+    if (id === 'saved')    renderSavedTab();
+    if (id === 'history')  renderHistoryTab();
+    if (id === 'progress') renderProgressTab();
+  }
+
   tabs.forEach(({ btn, view, id }) => {
     if (!btn) return;
     btn.addEventListener('click', () => {
-      tabs.forEach(t => {
-        t.btn?.classList.remove('active');
-        t.view?.classList.remove('active');
-      });
-      btn.classList.add('active');
-      view?.classList.add('active');
-      TG.Haptic.select();
+      // ── If mock test is actively running, ask first ───────────
+      const arenaVisible = !document.getElementById('mock-arena')?.classList.contains('hidden');
+      if (arenaVisible) {
+        TG.confirm(
+          'Leave the mock test? Your current progress will be lost.',
+          () => {
+            // Confirmed — stop test and switch tab
+            clearInterval(MockData.timerInterval);
+            MockData.history      = [];
+            MockData.currentIndex = 0;
+            _switchTab(btn, view, id);
+          }
+          // Cancelled — do nothing, stay in test
+        );
+        return; // block the switch until confirmed
+      }
 
-      if (id === 'home')     showSubjectPicker();
-      if (id === 'saved')    renderSavedTab();
-      if (id === 'history')  renderHistoryTab();
-      if (id === 'progress') renderProgressTab();
+      _switchTab(btn, view, id);
     });
   });
 
