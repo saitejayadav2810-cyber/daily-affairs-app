@@ -3783,3 +3783,290 @@ body {
   border-color: var(--cyan);
   color: var(--cyan);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   MOCK SCHEDULE — Today's Tests section
+═══════════════════════════════════════════════════════════════ */
+
+/* Section divider label */
+.mock-section-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 14px 4px 8px;
+  flex-shrink: 0;
+}
+
+/* Scheduled test card */
+.mock-sched-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+  margin-bottom: 2px;
+  border: 1.5px solid var(--glass-border);
+  background: var(--surface);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.10s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* LIVE — glowing amber border + subtle glow */
+.mock-sched-card.unlocked {
+  border-color: rgba(255,171,0,0.55);
+  background: linear-gradient(135deg,
+    rgba(255,171,0,0.08) 0%,
+    rgba(255,109,0,0.05) 100%);
+  cursor: pointer;
+  animation: sched-pulse 2.5s ease-in-out infinite;
+}
+
+@keyframes sched-pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(255,171,0,0); }
+  50%      { box-shadow: 0 0 16px 2px rgba(255,171,0,0.18); }
+}
+
+.mock-sched-card.unlocked:active {
+  transform: scale(0.97);
+  background: rgba(255,171,0,0.14);
+}
+
+/* LOCKED — greyed, no pointer */
+.mock-sched-card.locked {
+  opacity: 0.72;
+  cursor: default;
+}
+
+/* Badge: LIVE / lock icon */
+.sched-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 800;
+  font-family: var(--font-display);
+  padding: 4px 9px;
+  border-radius: 99px;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.badge-live {
+  background: rgba(0,230,118,0.15);
+  color: var(--green);
+  border: 1px solid rgba(0,230,118,0.35);
+}
+
+.badge-lock {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-muted);
+  border: 1px solid var(--glass-border);
+}
+
+/* Info column */
+.sched-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sched-name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mock-sched-card.unlocked .sched-name { color: var(--amber); }
+
+.sched-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+/* Countdown text — ticks every second */
+.sched-countdown {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* "Tap to start now!" when live */
+.sched-live-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--amber);
+  margin-top: 2px;
+}
+
+/* Arrow */
+.sched-arrow {
+  font-size: 18px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.mock-sched-card.unlocked .sched-arrow {
+  color: var(--amber);
+  opacity: 0.8;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SUNDAY MEGA BANNER  — home screen, between mode toggle & mock btn
+═══════════════════════════════════════════════════════════════ */
+.sunday-mega-banner {
+  margin: 0 16px 12px;
+  border-radius: var(--r-lg);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.10s, box-shadow 0.10s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── LOCKED state ── */
+.sunday-mega-banner.smb-locked {
+  background: var(--surface);
+  border: 1.5px dashed rgba(255,255,255,0.12);
+  opacity: 0.78;
+}
+
+/* ── LIVE state ── */
+.sunday-mega-banner.smb-live {
+  background: linear-gradient(135deg,
+    rgba(255,171,0,0.16) 0%,
+    rgba(255,109,0,0.10) 100%);
+  border: 1.5px solid rgba(255,171,0,0.60);
+  animation: smb-pulse 2s ease-in-out infinite;
+}
+
+.sunday-mega-banner.smb-live:active {
+  transform: scale(0.97);
+  box-shadow: 0 0 28px rgba(255,171,0,0.30);
+}
+
+@keyframes smb-pulse {
+  0%,100% { box-shadow: 0 0 0   0   rgba(255,171,0,0.00); }
+  50%      { box-shadow: 0 0 20px 3px rgba(255,171,0,0.22); }
+}
+
+/* Decorative rotating glow ring (LIVE only) */
+.smb-glow-ring {
+  position: absolute;
+  width: 120px; height: 120px;
+  top: -30px; right: -30px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,171,0,0.18) 0%, transparent 70%);
+  pointer-events: none;
+  animation: smb-rotate 6s linear infinite;
+}
+
+@keyframes smb-rotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Icon */
+.smb-icon {
+  font-size: 32px;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 52px; height: 52px;
+  border-radius: var(--r-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,171,0,0.12);
+  border: 1px solid rgba(255,171,0,0.30);
+  filter: drop-shadow(0 0 8px rgba(255,171,0,0.50));
+}
+
+.smb-icon-lock {
+  filter: none;
+  opacity: 0.5;
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.10);
+}
+
+/* Info column */
+.smb-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.smb-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.smb-live .smb-title { color: var(--amber); }
+
+.smb-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+/* Live pill */
+.smb-live-pill {
+  display: inline-block;
+  margin-top: 4px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+  background: rgba(0,230,118,0.12);
+  border: 1px solid rgba(0,230,118,0.30);
+  border-radius: 99px;
+  padding: 2px 10px;
+  width: fit-content;
+}
+
+/* Countdown text */
+.smb-countdown {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  line-height: 1.3;
+}
+
+.smb-countdown strong {
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+/* Arrow */
+.smb-arrow {
+  font-size: 20px;
+  color: var(--amber);
+  opacity: 0.75;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.smb-arrow-lock {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
